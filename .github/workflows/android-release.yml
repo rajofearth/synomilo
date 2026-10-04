@@ -30,8 +30,11 @@ jobs:
           node-version: '20'
           cache: npm
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK
+        run: |
+          TOOLS_BIN=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin | head -n1)
+          echo "$TOOLS_BIN" >> "$GITHUB_PATH"
+          "$TOOLS_BIN/sdkmanager" --version
 
       - name: Install NDK and CMake
         run: |
