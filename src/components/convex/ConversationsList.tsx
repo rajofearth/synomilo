@@ -9,6 +9,8 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FAB } from 'react-native-paper';
+import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useQuery, useMutation } from 'convex/react';
 import dayjs from 'dayjs';
@@ -253,6 +255,18 @@ const ConversationsList = ({ navigation }: any) => {
           )}
         />
       )}
+      <FAB
+        variant="primary"
+        style={styles.fab}
+        icon={({ size, color }) => (
+          <MaterialDesignIcons
+            name="account-group-outline"
+            size={size}
+            color={color}
+          />
+        )}
+        onPress={() => navigation.navigate('Groups')}
+      />
     </SafeAreaView>
   );
 };
@@ -366,5 +380,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    borderRadius: 20,
   },
 });

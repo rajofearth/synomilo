@@ -19,8 +19,12 @@ import {
   UIKitSettings,
 } from '@cometchat/chat-uikit-react-native';
 import { ConvexProvider, useMutation } from 'convex/react';
-import { PaperProvider } from 'react-native-paper';
-import { paperTheme } from './src/theme/paperTheme';
+import { PaperProvider, useTheme } from 'react-native-paper';
+import {
+  buildPaperTheme,
+  staticFallbackTheme,
+} from './src/theme/dynamicTheme';
+import UpdateChecker from './src/updater/UpdateChecker';
 
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -67,6 +71,7 @@ const AppInner = (): React.ReactElement => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [hasValidAppCredentials, setHasValidAppCredentials] = useState(false);
   const styleConfig = useConfig(state => state?.settings?.style);
+  const paperTheme = useTheme();
 
   const { user: sessionUser, isLoading: sessionLoading, token } = useSession();
   const isLoggedIn = !!sessionUser;
@@ -77,7 +82,7 @@ const AppInner = (): React.ReactElement => {
   const theme: { light: DeepPartial<CometChatTheme>; dark: DeepPartial<CometChatTheme> } = {
     light: {
       color: {
-        primary: styleConfig.color.brandColor,
+        primary: paperTheme.colors.primary as string,
         textPrimary: styleConfig.color.primaryTextLight,
         textSecondary: styleConfig.color.secondaryTextLight,
       },
@@ -85,7 +90,7 @@ const AppInner = (): React.ReactElement => {
     },
     dark: {
       color: {
-        primary: styleConfig.color.brandColor,
+        primary: paperTheme.colors.primary as string,
         textPrimary: styleConfig.color.primaryTextDark,
         textSecondary: styleConfig.color.secondaryTextDark,
       },
@@ -445,11 +450,20 @@ const AppInner = (): React.ReactElement => {
 };
 
 const App = (): React.ReactElement => {
+  const [theme, setTheme] = useState(staticFallbackTheme);
+
+  useEffect(() => {
+    buildPaperTheme()
+      .then(setTheme)
+      .catch(() => {});
+  }, []);
+
   return (
     <ConvexProvider client={convex}>
-      <PaperProvider theme={paperTheme}>
+      <PaperProvider theme={theme}>
         <SessionProvider>
           <AppInner />
+          <UpdateChecker />
         </SessionProvider>
       </PaperProvider>
     </ConvexProvider>

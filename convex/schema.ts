@@ -17,7 +17,9 @@ export default defineSchema({
     userId: v.id("users"),
     createdAt: v.number(),
     lastSeenAt: v.number(),
-  }).index("by_token", ["token"]),
+  })
+    .index("by_token", ["token"])
+    .index("by_user", ["userId"]),
 
   conversations: defineTable({
     type: v.union(v.literal("dm"), v.literal("group")),
@@ -108,4 +110,12 @@ export default defineSchema({
     payload: v.string(),
     createdAt: v.number(),
   }).index("by_call_to", ["callId", "toUserId"]),
+
+  updateCache: defineTable({
+    version: v.string(),
+    storageId: v.id("_storage"),
+    size: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_version", ["version"]),
 });

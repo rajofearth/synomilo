@@ -17,13 +17,14 @@ import {
   Animated,
   Dimensions,
   Image,
-  Linking,
   Modal,
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Video from 'react-native-video';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useTheme as usePaperTheme } from 'react-native-paper';
 import { useQuery, useMutation } from 'convex/react';
@@ -71,6 +72,28 @@ type Message = {
   reactions: Array<{ emoji: string; count: number; mine: boolean }>;
 };
 
+type Receipt = {
+  userId: string;
+  lastReadAt: number;
+  lastSeenAt: number;
+};
+
+type PendingAttachment = {
+  id: string;
+  uri: string;
+  name: string;
+  mimeType: string;
+  size: number | null;
+  kind: Message['kind'];
+};
+
+let pendingSequence = 0;
+
+const nextPendingId = (): string => {
+  pendingSequence += 1;
+  return `pending-${Date.now()}-${pendingSequence}`;
+};
+
 const formatBytes = (bytes: number | null): string => {
   if (!bytes || bytes <= 0) {
     return '';
@@ -108,6 +131,21 @@ const attachmentLabel = (kind: Message['kind']): string => {
       return 'Voice note';
     default:
       return 'Attachment';
+  }
+};
+
+const pendingIconName = (
+  kind: Message['kind'],
+): React.ComponentProps<typeof MaterialDesignIcons>['name'] => {
+  switch (kind) {
+    case 'image':
+      return 'file-image';
+    case 'video':
+      return 'file-video';
+    case 'audio':
+      return 'music-note';
+    default:
+      return 'file-document';
   }
 };
 
@@ -199,6 +237,8 @@ const ChatScreen = ({ route, navigation }: any) => {
   const theme = useTheme();
   const paperTheme = usePaperTheme();
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { token, user } = useSession();
   const conversationId = route.params?.conversationId as string;
   const fallbackTitle = (route.params?.title as string) ?? 'Chat';
@@ -246,6 +286,8 @@ const ChatScreen = ({ route, navigation }: any) => {
   );
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [viewer, setViewer] = useState<{ message: Message } | null>(null);
   const menuScale = useRef(new Animated.Value(0.8)).current;
   const menuOpacity = useRef(new Animated.Value(0)).current;
   const listRef = useRef<FlatList<Message>>(null);
@@ -254,6 +296,27 @@ const ChatScreen = ({ route, navigation }: any) => {
   const messages = useMemo(
     () => [...(thread?.messages ?? [])].reverse(),
     [thread],
+  );
+
+  const receipts = useMemo<Receipt[]>(
+    () => ((thread as any)?.receipts ?? []) as Receipt[],
+    [thread],
+  );
+
+  const tickFor = useCallback(
+    (message: Message): 'sent' | 'delivered' | 'read' => {
+      if (receipts.length === 0) {
+        return 'sent';
+      }
+      if (receipts.every(receipt => receipt.lastReadAt >= message.createdAt)) {
+        return 'read';
+      }
+      if (receipts.every(receipt => receipt.lastSeenAt >= message.createdAt)) {
+        return 'delivered';
+      }
+      return 'sent';
+    },
+    [receipts],
   );
 
   useEffect(() => {
@@ -340,53 +403,19 @@ const ChatScreen = ({ route, navigation }: any) => {
     [token, conversationId, setTyping],
   );
 
-  const onSend = useCallback(async () => {
-    const body = text.trim();
-    if (!body || !token || sending) {
-      return;
-    }
-    setText('');
-    const replyToId = replyTarget?._id;
-    setReplyTarget(null);
-    if (typingTimerRef.current) {
-      clearTimeout(typingTimerRef.current);
-    }
-    try {
-      await sendMessage({
-        token,
-        conversationId: conversationId as any,
-        body,
-        replyToId: replyToId as any,
-      });
-    } catch (error) {
-      setText(body);
-      Alert.alert(
-        'Message not sent',
-        convexErrorMessage(error, 'Please try again.'),
-      );
-    }
-  }, [text, token, sending, sendMessage, conversationId, replyTarget]);
+  const removePending = useCallback((id: string) => {
+    setPending(prev => prev.filter(item => item.id !== id));
+  }, []);
 
   const uploadAsset = useCallback(
-    async (
-      asset: {
-        uri?: string | null;
-        fileName?: string | null;
-        name?: string | null;
-        type?: string | null;
-        fileSize?: number | null;
-        size?: number | null;
-      },
-      kind: Message['kind'],
-    ) => {
-      if (!token || !asset.uri) {
-        return;
+    async (attachment: PendingAttachment): Promise<boolean> => {
+      if (!token) {
+        return false;
       }
-      setSending(true);
       try {
         const postUrl = await generateUploadUrl({ token });
-        const blob = await uriToBlob(asset.uri);
-        const mime = asset.type ?? 'application/octet-stream';
+        const blob = await uriToBlob(attachment.uri);
+        const mime = attachment.mimeType || 'application/octet-stream';
         const response = await fetch(postUrl, {
           method: 'POST',
           headers: { 'Content-Type': mime },
@@ -396,80 +425,163 @@ const ChatScreen = ({ route, navigation }: any) => {
         await sendMessage({
           token,
           conversationId: conversationId as any,
-          kind,
+          kind: attachment.kind,
           storageId,
-          fileName: asset.fileName ?? asset.name ?? 'file',
+          fileName: attachment.name || 'file',
           mimeType: mime,
-          size: asset.fileSize ?? asset.size ?? undefined,
+          size: attachment.size ?? undefined,
         });
+        return true;
       } catch (error) {
         Alert.alert(
           'Upload failed',
           convexErrorMessage(error, 'Could not upload the file.'),
         );
-      } finally {
-        setSending(false);
+        return false;
       }
     },
     [token, generateUploadUrl, sendMessage, conversationId],
   );
 
+  const onSend = useCallback(async () => {
+    const body = text.trim();
+    const queue = pending;
+    if ((!body && queue.length === 0) || !token || sending) {
+      return;
+    }
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+    }
+    setSending(true);
+    try {
+      if (body) {
+        const replyToId = replyTarget?._id;
+        setText('');
+        setReplyTarget(null);
+        try {
+          await sendMessage({
+            token,
+            conversationId: conversationId as any,
+            body,
+            replyToId: replyToId as any,
+          });
+        } catch (error) {
+          setText(body);
+          Alert.alert(
+            'Message not sent',
+            convexErrorMessage(error, 'Please try again.'),
+          );
+          return;
+        }
+      }
+      for (const attachment of queue) {
+        const uploaded = await uploadAsset(attachment);
+        if (uploaded) {
+          setPending(prev => prev.filter(item => item.id !== attachment.id));
+        }
+      }
+    } finally {
+      setSending(false);
+    }
+  }, [
+    text,
+    pending,
+    token,
+    sending,
+    sendMessage,
+    conversationId,
+    replyTarget,
+    uploadAsset,
+  ]);
+
   const pickPhoto = useCallback(async () => {
     setAttachOpen(false);
     const result = await launchImageLibrary({
       mediaType: 'photo',
-      selectionLimit: 1,
+      selectionLimit: 0,
     });
-    const asset = result.assets?.[0];
-    if (!asset?.uri) {
-      return;
+    const additions: PendingAttachment[] = (result.assets ?? [])
+      .filter(asset => !!asset.uri)
+      .map(asset => ({
+        id: nextPendingId(),
+        uri: asset.uri as string,
+        name: asset.fileName ?? `photo-${Date.now()}.jpg`,
+        mimeType: asset.type ?? 'image/jpeg',
+        size: asset.fileSize ?? null,
+        kind: 'image' as Message['kind'],
+      }));
+    if (additions.length > 0) {
+      setPending(prev => [...prev, ...additions]);
     }
-    await uploadAsset(asset, 'image');
-  }, [uploadAsset]);
+  }, []);
 
   const pickVideo = useCallback(async () => {
     setAttachOpen(false);
     const result = await launchImageLibrary({
       mediaType: 'video',
-      selectionLimit: 1,
+      selectionLimit: 0,
     });
-    const asset = result.assets?.[0];
-    if (!asset?.uri) {
-      return;
+    const additions: PendingAttachment[] = (result.assets ?? [])
+      .filter(asset => !!asset.uri)
+      .map(asset => ({
+        id: nextPendingId(),
+        uri: asset.uri as string,
+        name: asset.fileName ?? `video-${Date.now()}.mp4`,
+        mimeType: asset.type ?? 'video/mp4',
+        size: asset.fileSize ?? null,
+        kind: 'video' as Message['kind'],
+      }));
+    if (additions.length > 0) {
+      setPending(prev => [...prev, ...additions]);
     }
-    await uploadAsset(asset, 'video');
-  }, [uploadAsset]);
+  }, []);
 
   const pickDocument = useCallback(async () => {
     setAttachOpen(false);
     try {
-      const [file] = await pick({ type: [docTypes.allFiles] });
-      if (!file?.uri) {
+      const files = await pick({
+        type: [docTypes.allFiles],
+        allowMultiSelection: true,
+      });
+      if (files.length === 0) {
         return;
       }
-      let uri = file.uri;
-      try {
-        const copies = await keepLocalCopy({
-          files: [{ uri: file.uri, fileName: file.name ?? 'file' }],
-          destination: 'cachesDirectory',
-        });
-        const first = copies[0];
-        if (first && 'localUri' in first && first.localUri) {
-          uri = first.localUri;
+      const additions: PendingAttachment[] = [];
+      for (const file of files) {
+        if (!file.uri) {
+          continue;
         }
-      } catch {}
-      const mime = file.type ?? 'application/octet-stream';
-      const kind: Message['kind'] = mime.startsWith('image/')
-        ? 'image'
-        : mime.startsWith('video/')
-          ? 'video'
-          : mime.startsWith('audio/')
-            ? 'audio'
-            : 'file';
-      await uploadAsset(
-        { uri, name: file.name, type: mime, size: file.size },
-        kind,
-      );
+        let uri = file.uri;
+        try {
+          const copies = await keepLocalCopy({
+            files: [{ uri: file.uri, fileName: file.name ?? 'file' }],
+            destination: 'cachesDirectory',
+          });
+          const first = copies[0];
+          if (first && 'localUri' in first && first.localUri) {
+            uri = first.localUri;
+          }
+        } catch {}
+        const mime = file.type ?? 'application/octet-stream';
+        const kind: Message['kind'] = mime.startsWith('image/')
+          ? 'image'
+          : mime.startsWith('video/')
+            ? 'video'
+            : mime.startsWith('audio/')
+              ? 'audio'
+              : 'file';
+        additions.push({
+          id: nextPendingId(),
+          uri,
+          name: file.name ?? 'file',
+          mimeType: mime,
+          size: file.size ?? null,
+          kind,
+        });
+      }
+      if (additions.length > 0) {
+        setPending(prev => [...prev, ...additions]);
+      }
     } catch (error) {
       if (
         isErrorWithCode(error) &&
@@ -482,7 +594,7 @@ const ChatScreen = ({ route, navigation }: any) => {
         convexErrorMessage(error, 'Please try again.'),
       );
     }
-  }, [uploadAsset]);
+  }, []);
 
   const applyReaction = useCallback(
     async (message: Message, emoji: string) => {
@@ -626,11 +738,18 @@ const ChatScreen = ({ route, navigation }: any) => {
     [token, otherMember, startCall, navigation],
   );
 
-  const openFile = useCallback((message: Message) => {
-    if (message.fileUrl) {
-      Linking.openURL(message.fileUrl).catch(() => {});
-    }
+  const openViewer = useCallback((message: Message) => {
+    setViewer({ message });
   }, []);
+
+  const forwardFromViewer = useCallback(() => {
+    if (!viewer) {
+      return;
+    }
+    const message = viewer.message;
+    setViewer(null);
+    navigation.navigate('ForwardMessage', { message });
+  }, [viewer, navigation]);
 
   const renderMessage = useCallback(
     ({ item, index }: { item: Message; index: number }) => {
@@ -641,6 +760,8 @@ const ChatScreen = ({ route, navigation }: any) => {
         !older || !dayjs(older.createdAt).isSame(item.createdAt, 'day');
       const deleted = !!item.deletedAt;
       const isHighlighted = highlightId === item._id;
+      const tick = mine && !deleted ? tickFor(item) : null;
+      const timeColor = mine ? '#E9E4FF' : theme.color.textTertiary;
 
       return (
         <View>
@@ -773,7 +894,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                     </Pressable>
                   )}
                   {item.kind === 'image' && item.fileUrl ? (
-                    <Pressable onPress={() => openFile(item)}>
+                    <Pressable onPress={() => openViewer(item)}>
                       <Image
                         source={{ uri: item.fileUrl }}
                         style={styles.imageAttachment}
@@ -781,7 +902,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                       />
                     </Pressable>
                   ) : item.kind !== 'text' ? (
-                    <Pressable onPress={() => openFile(item)} style={styles.fileRow}>
+                    <Pressable onPress={() => openViewer(item)} style={styles.fileRow}>
                       <MaterialDesignIcons
                         name={
                           item.kind === 'video'
@@ -834,16 +955,26 @@ const ChatScreen = ({ route, navigation }: any) => {
                   )}
                 </>
               )}
-              <Text
-                style={[
-                  theme.typography.caption2?.regular ??
-                    theme.typography.caption1.regular,
-                  styles.bubbleTime,
-                  { color: mine ? '#E9E4FF' : theme.color.textTertiary },
-                ]}
-              >
-                {dayjs(item.createdAt).format('h:mm A')}
-              </Text>
+              <View style={styles.bubbleTimeRow}>
+                <Text
+                  style={[
+                    theme.typography.caption2?.regular ??
+                      theme.typography.caption1.regular,
+                    styles.bubbleTime,
+                    { color: timeColor },
+                  ]}
+                >
+                  {dayjs(item.createdAt).format('h:mm A')}
+                </Text>
+                {tick && (
+                  <MaterialDesignIcons
+                    name={tick === 'sent' ? 'check' : 'check-all'}
+                    size={14}
+                    color={tick === 'read' ? '#53BDEB' : timeColor}
+                    style={styles.bubbleTick}
+                  />
+                )}
+              </View>
             </Pressable>
 
             {item.reactions.length > 0 && !deleted && (
@@ -888,14 +1019,18 @@ const ChatScreen = ({ route, navigation }: any) => {
       conversation?.type,
       theme,
       applyReaction,
-      openFile,
+      openViewer,
       messages,
       highlightId,
       scrollToMessage,
+      tickFor,
     ],
   );
 
   const isSubscribed = thread !== undefined;
+  const canSend = (!!text.trim() || pending.length > 0) && !sending;
+  const viewerWidth = windowWidth - 32;
+  const viewerHeight = windowHeight - 160;
   const actionCount = actionTarget
     ? 3 +
       (actionTarget.kind === 'text' ? 1 : 0) +
@@ -1045,6 +1180,66 @@ const ChatScreen = ({ route, navigation }: any) => {
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
+        {pending.length > 0 && (
+          <View
+            style={[
+              styles.pendingBar,
+              {
+                backgroundColor: theme.color.background2,
+                borderTopColor: theme.color.borderDefault,
+              },
+            ]}
+          >
+            <FlatList
+              horizontal
+              data={pending}
+              keyExtractor={item => item.id}
+              showsHorizontalScrollIndicator={false}
+              style={styles.pendingList}
+              renderItem={({ item }) => (
+                <View
+                  style={[
+                    styles.pendingChip,
+                    { backgroundColor: paperTheme.colors.surfaceVariant },
+                  ]}
+                >
+                  {item.kind === 'image' ? (
+                    <Image
+                      source={{ uri: item.uri }}
+                      style={styles.pendingThumb}
+                    />
+                  ) : (
+                    <MaterialDesignIcons
+                      name={pendingIconName(item.kind)}
+                      size={20}
+                      color={paperTheme.colors.onSurfaceVariant}
+                      style={styles.pendingIcon}
+                    />
+                  )}
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.pendingName,
+                      { color: paperTheme.colors.onSurfaceVariant },
+                    ]}
+                  >
+                    {item.name}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => removePending(item.id)}
+                    style={styles.pendingRemove}
+                  >
+                    <MaterialDesignIcons
+                      name="close"
+                      size={14}
+                      color={paperTheme.colors.onSurfaceVariant}
+                    />
+                  </TouchableOpacity>
+                </View>
+              )}
+            />
+          </View>
+        )}
         {replyTarget && (
           <View
             style={[
@@ -1131,10 +1326,10 @@ const ChatScreen = ({ route, navigation }: any) => {
             style={[
               styles.sendButton,
               { backgroundColor: theme.color.primary },
-              (!text.trim() || sending) && styles.sendButtonDisabled,
+              !canSend && styles.sendButtonDisabled,
             ]}
             onPress={onSend}
-            disabled={!text.trim() || sending}
+            disabled={!canSend}
           >
             {sending ? (
               <ActivityIndicator color="#fff" size="small" />
@@ -1208,6 +1403,148 @@ const ChatScreen = ({ route, navigation }: any) => {
             </TouchableOpacity>
           </View>
         </Pressable>
+      </Modal>
+
+      <Modal
+        visible={viewer !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setViewer(null)}
+      >
+        <View style={styles.viewerBackdrop}>
+          {viewer && (
+            <>
+              <View
+                style={[
+                  styles.viewerTopBar,
+                  {
+                    top: insets.top + 8,
+                    backgroundColor: paperTheme.colors.elevation.level3,
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={styles.viewerTopButton}
+                  onPress={() => setViewer(null)}
+                >
+                  <MaterialDesignIcons
+                    name="close"
+                    size={24}
+                    color={paperTheme.colors.onSurface}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.viewerTopButton}
+                  onPress={forwardFromViewer}
+                >
+                  <MaterialDesignIcons
+                    name="share-variant"
+                    size={22}
+                    color={paperTheme.colors.onSurface}
+                  />
+                </TouchableOpacity>
+              </View>
+              {viewer.message.kind === 'image' && viewer.message.fileUrl ? (
+                <Image
+                  source={{ uri: viewer.message.fileUrl }}
+                  style={[
+                    styles.viewerImage,
+                    { width: viewerWidth, height: viewerHeight },
+                  ]}
+                  resizeMode="contain"
+                />
+              ) : viewer.message.kind === 'video' && viewer.message.fileUrl ? (
+                <Video
+                  source={{ uri: viewer.message.fileUrl }}
+                  style={[
+                    styles.viewerVideo,
+                    { width: viewerWidth, height: viewerHeight },
+                  ]}
+                  controls
+                  paused={false}
+                  resizeMode="contain"
+                />
+              ) : viewer.message.kind === 'audio' ? (
+                <View style={styles.viewerAudioWrap}>
+                  <MaterialDesignIcons
+                    name="music-note"
+                    size={96}
+                    color="#FFFFFF"
+                  />
+                  <Text
+                    numberOfLines={2}
+                    style={styles.viewerAudioName}
+                  >
+                    {viewer.message.fileName ?? 'Voice note'}
+                  </Text>
+                  {!!viewer.message.fileUrl && (
+                    <Video
+                      source={{ uri: viewer.message.fileUrl }}
+                      style={styles.viewerAudioPlayer}
+                      controls
+                      paused={false}
+                    />
+                  )}
+                </View>
+              ) : (
+                <View
+                  style={[
+                    styles.viewerFileCard,
+                    {
+                      width: Math.min(windowWidth - 48, 340),
+                      backgroundColor: paperTheme.colors.elevation.level2,
+                    },
+                  ]}
+                >
+                  <MaterialDesignIcons
+                    name="file-document-outline"
+                    size={48}
+                    color={paperTheme.colors.onSurfaceVariant}
+                  />
+                  <Text
+                    numberOfLines={2}
+                    style={[
+                      styles.viewerFileName,
+                      { color: paperTheme.colors.onSurface },
+                    ]}
+                  >
+                    {viewer.message.fileName ?? 'Attachment'}
+                  </Text>
+                  {!!formatBytes(viewer.message.size) && (
+                    <Text
+                      style={[
+                        styles.viewerFileMeta,
+                        { color: paperTheme.colors.onSurfaceVariant },
+                      ]}
+                    >
+                      {formatBytes(viewer.message.size)}
+                    </Text>
+                  )}
+                  {!!viewer.message.mimeType && (
+                    <Text
+                      style={[
+                        styles.viewerFileMeta,
+                        { color: paperTheme.colors.onSurfaceVariant },
+                      ]}
+                    >
+                      {viewer.message.mimeType}
+                    </Text>
+                  )}
+                  <Text
+                    style={[
+                      styles.viewerFileTime,
+                      { color: paperTheme.colors.onSurfaceVariant },
+                    ]}
+                  >
+                    {dayjs(viewer.message.createdAt).format(
+                      'MMMM D, YYYY h:mm A',
+                    )}
+                  </Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
       </Modal>
 
       {actionTarget && (
@@ -1495,10 +1832,17 @@ const styles = StyleSheet.create({
   bubbleText: {
     marginTop: 2,
   },
-  bubbleTime: {
-    marginTop: 4,
+  bubbleTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     alignSelf: 'flex-end',
+    marginTop: 4,
+  },
+  bubbleTime: {
     fontSize: 10,
+  },
+  bubbleTick: {
+    marginLeft: 3,
   },
   imageAttachment: {
     width: 220,
@@ -1589,6 +1933,41 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     opacity: 0.5,
   },
+  pendingBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  pendingList: {
+    flexGrow: 0,
+  },
+  pendingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    paddingLeft: 6,
+    paddingRight: 4,
+    paddingVertical: 4,
+    marginRight: 8,
+    maxWidth: 220,
+  },
+  pendingThumb: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+  },
+  pendingIcon: {
+    marginHorizontal: 6,
+  },
+  pendingName: {
+    flexShrink: 1,
+    fontSize: 13,
+    marginRight: 2,
+  },
+  pendingRemove: {
+    padding: 4,
+    marginLeft: 2,
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -1608,6 +1987,78 @@ const styles = StyleSheet.create({
   },
   attachOptionIcon: {
     marginRight: 14,
+  },
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerTopBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    borderRadius: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    zIndex: 2,
+    elevation: 6,
+  },
+  viewerTopButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerImage: {
+    borderRadius: 16,
+  },
+  viewerVideo: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
+  },
+  viewerAudioWrap: {
+    width: '100%',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  viewerAudioName: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    marginTop: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  viewerAudioPlayer: {
+    width: '100%',
+    height: 56,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  viewerFileCard: {
+    borderRadius: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  viewerFileName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  viewerFileMeta: {
+    fontSize: 13,
+    marginTop: 6,
+  },
+  viewerFileTime: {
+    fontSize: 12,
+    marginTop: 14,
   },
   actionOverlay: {
     ...StyleSheet.absoluteFillObject,
