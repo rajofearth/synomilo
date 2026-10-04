@@ -1,5 +1,7 @@
 package com.rajofearth.synomilo
 
+import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -121,6 +123,14 @@ class InstallerModule(reactContext: ReactApplicationContext) :
         } catch (error: Exception) {
             promise.reject("E_INSTALL", error.message, error)
         }
+    }
+
+    @ReactMethod
+    fun cancelNotifications(tag: String) {
+        val manager = reactApplicationContext.getSystemService(
+            Context.NOTIFICATION_SERVICE,
+        ) as NotificationManager
+        manager.cancel(tag, 0)
     }
 
     private fun emitProgress(progress: Int, bytes: Long, total: Long) {

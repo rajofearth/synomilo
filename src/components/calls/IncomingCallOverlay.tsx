@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
+import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
@@ -21,6 +24,8 @@ import {
 
 const IncomingCallOverlay: React.FC = () => {
   const { token } = useSession();
+  const theme = useTheme();
+  const pulse = useRef(new Animated.Value(0)).current;
   const incoming = useQuery(
     api.calls.incoming,
     token ? { token } : 'skip',
@@ -32,6 +37,7 @@ const IncomingCallOverlay: React.FC = () => {
       }
     | null
     | undefined;
+  const incomingId = incoming?._id ?? null;
   const acceptCall = useMutation(api.calls.accept);
   const rejectCall = useMutation(api.calls.reject);
   const [busy, setBusy] = useState(false);
@@ -69,9 +75,7 @@ const IncomingCallOverlay: React.FC = () => {
     try {
       await rejectCall({ token, callId: incoming._id as any });
       dismissCallNotification(incoming._id);
-    } catch {
-      // call already gone
-    } finally {
+    } catch {} finally {
       setBusy(false);
     }
   }, [token, incoming, busy, rejectCall]);
@@ -82,53 +86,121 @@ const IncomingCallOverlay: React.FC = () => {
     }
   }, [incoming?._id]);
 
+  useEffect(() => {
+    if (!incomingId) {
+      return;
+    }
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => {
+      animation.stop();
+    };
+  }, [incomingId, pulse]);
+
   if (!incoming) {
     return null;
   }
 
   const callerName = incoming.caller?.displayName ?? 'Unknown';
+  const pulseScale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.08],
+  });
 
   return (
-    <View style={styles.backdrop}>
+    <View
+      style={[styles.backdrop, { backgroundColor: theme.color.background1 }]}
+    >
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.body}>
-          <Text style={styles.callingLabel}>
+          <Text
+            style={[styles.callingLabel, { color: theme.color.textSecondary }]}
+          >
             Incoming {incoming.type === 'video' ? 'video' : 'voice'} call
           </Text>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {callerName
-                .split(/\s+/)
-                .filter(Boolean)
-                .slice(0, 2)
-                .map(part => part[0]?.toUpperCase() ?? '')
-                .join('')}
-            </Text>
+          <View style={styles.avatarWrap}>
+            <Animated.View
+              style={[
+                styles.pulseRing,
+                {
+                  borderColor: theme.color.primary,
+                  transform: [{ scale: pulseScale }],
+                },
+              ]}
+            />
+            <View
+              style={[
+                styles.avatar,
+                { backgroundColor: theme.color.extendedPrimary50 },
+              ]}
+            >
+              <Text style={[styles.avatarText, { color: theme.color.primary }]}>
+                {callerName
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map(part => part[0]?.toUpperCase() ?? '')
+                  .join('')}
+              </Text>
+            </View>
           </View>
-          <Text style={styles.name}>{callerName}</Text>
+          <Text style={[styles.name, { color: theme.color.textPrimary }]}>
+            {callerName}
+          </Text>
         </View>
 
         <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#E5484D' }]}
-            onPress={decline}
-            disabled={busy}
-          >
-            <MaterialDesignIcons name="phone-hangup" size={32} color="#FFFFFF" />
-            <Text style={styles.actionLabel}>Decline</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#2FBF71' }]}
-            onPress={accept}
-            disabled={busy}
-          >
-            {busy ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <MaterialDesignIcons name="phone" size={32} color="#FFFFFF" />
-            )}
-            <Text style={styles.actionLabel}>Accept</Text>
-          </TouchableOpacity>
+          <View style={styles.action}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.declineButton]}
+              onPress={decline}
+              disabled={busy}
+            >
+              <MaterialDesignIcons
+                name="phone-hangup"
+                size={30}
+                color="#FFFFFF"
+              />
+            </TouchableOpacity>
+            <Text
+              style={[styles.actionLabel, { color: theme.color.textPrimary }]}
+            >
+              Decline
+            </Text>
+          </View>
+          <View style={styles.action}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.acceptButton]}
+              onPress={accept}
+              disabled={busy}
+            >
+              {busy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <MaterialDesignIcons name="phone" size={30} color="#FFFFFF" />
+              )}
+            </TouchableOpacity>
+            <Text
+              style={[styles.actionLabel, { color: theme.color.textPrimary }]}
+            >
+              Accept
+            </Text>
+          </View>
         </View>
       </SafeAreaView>
     </View>
@@ -140,7 +212,6 @@ export default IncomingCallOverlay;
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(10,10,16,0.96)',
     zIndex: 100,
   },
   safe: {
@@ -153,25 +224,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   callingLabel: {
-    color: '#C9C9D4',
     fontSize: 16,
     marginBottom: 24,
   },
+  avatarWrap: {
+    width: 140,
+    height: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 2,
+    opacity: 0.5,
+  },
   avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#5B4BC4',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarText: {
-    color: '#fff',
-    fontSize: 40,
+    fontSize: 48,
     fontWeight: '700',
   },
   name: {
-    color: '#fff',
     fontSize: 26,
     fontWeight: '700',
     marginTop: 20,
@@ -179,18 +260,27 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     justifyContent: 'space-evenly',
-    paddingBottom: 48,
+    alignItems: 'center',
+    paddingBottom: 56,
+  },
+  action: {
+    alignItems: 'center',
   },
   actionButton: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  declineButton: {
+    backgroundColor: '#E5484D',
+  },
+  acceptButton: {
+    backgroundColor: '#2FBF71',
+  },
   actionLabel: {
-    color: '#fff',
     fontSize: 13,
-    marginTop: 4,
+    marginTop: 8,
   },
 });

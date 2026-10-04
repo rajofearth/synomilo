@@ -3,6 +3,7 @@ import { Alert, Linking, StyleSheet, View } from 'react-native';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { Appbar, Divider, List } from 'react-native-paper';
+import DeviceInfo from 'react-native-device-info';
 import { useSession } from '../../auth/SessionProvider';
 
 const SettingsScreen = ({ navigation }: any) => {
@@ -33,7 +34,7 @@ const SettingsScreen = ({ navigation }: any) => {
       <Appbar.Header style={{ backgroundColor: theme.color.background2 }}>
         <Appbar.BackAction
           onPress={() => navigation.goBack()}
-          color={theme.color.textPrimary}
+          color={theme.color.textPrimary as string}
         />
         <Appbar.Content
           title="Settings"
@@ -70,7 +71,7 @@ const SettingsScreen = ({ navigation }: any) => {
       >
         <List.Item
           title="synomiló"
-          description="Version 1.0.0 (Convex chat)"
+          description={`Version ${DeviceInfo.getVersion()} (${DeviceInfo.getBuildNumber()})`}
           titleStyle={{ color: theme.color.textPrimary }}
           descriptionStyle={{ color: theme.color.textSecondary }}
           left={({ style }) => (

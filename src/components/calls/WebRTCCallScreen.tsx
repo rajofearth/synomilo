@@ -301,7 +301,9 @@ const CallScreen = ({ route, navigation }: any) => {
         : 'Call ended';
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[styles.container, { backgroundColor: theme.color.background1 }]}
+    >
       {role === 'caller' && call?.status === 'ringing' && (
         <Video
           source={require('../../assets/sounds/ringback.wav')}
@@ -339,12 +341,27 @@ const CallScreen = ({ route, navigation }: any) => {
 
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <Text style={styles.peerName}>{peerName}</Text>
-          <Text style={styles.status}>{statusLabel}</Text>
+          <Text style={[styles.peerName, { color: theme.color.textPrimary }]}>
+            {peerName}
+          </Text>
+          <Text
+            style={[
+              styles.status,
+              { color: theme.color.textSecondary },
+              call?.status === 'active' && styles.statusActive,
+            ]}
+          >
+            {statusLabel}
+          </Text>
         </View>
 
         {type === 'video' && localURL && (
-          <View style={styles.localPreview}>
+          <View
+            style={[
+              styles.localPreview,
+              { backgroundColor: theme.color.background3 },
+            ]}
+          >
             <RTCView
               streamURL={localURL}
               style={styles.localPreviewInner}
@@ -357,36 +374,53 @@ const CallScreen = ({ route, navigation }: any) => {
 
         <View style={styles.controls}>
           <TouchableOpacity
-            style={[styles.controlButton, { backgroundColor: '#2A2A3A' }]}
+            style={[
+              styles.controlButton,
+              {
+                backgroundColor: muted
+                  ? theme.color.primary
+                  : theme.color.background3,
+              },
+            ]}
             onPress={toggleMute}
           >
             <MaterialDesignIcons
               name={muted ? 'microphone-off' : 'microphone'}
               size={26}
-              color="#FFFFFF"
+              color={muted ? '#FFFFFF' : theme.color.textPrimary}
             />
           </TouchableOpacity>
 
           {type === 'video' && (
             <>
               <TouchableOpacity
-                style={[styles.controlButton, { backgroundColor: '#2A2A3A' }]}
+                style={[
+                  styles.controlButton,
+                  {
+                    backgroundColor: cameraOff
+                      ? theme.color.primary
+                      : theme.color.background3,
+                  },
+                ]}
                 onPress={toggleCamera}
               >
                 <MaterialDesignIcons
                   name={cameraOff ? 'video-off' : 'video'}
                   size={26}
-                  color="#FFFFFF"
+                  color={cameraOff ? '#FFFFFF' : theme.color.textPrimary}
                 />
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.controlButton, { backgroundColor: '#2A2A3A' }]}
+                style={[
+                  styles.controlButton,
+                  { backgroundColor: theme.color.background3 },
+                ]}
                 onPress={flipCamera}
               >
                 <MaterialDesignIcons
                   name="camera-flip-outline"
                   size={26}
-                  color="#FFFFFF"
+                  color={theme.color.textPrimary}
                 />
               </TouchableOpacity>
             </>
@@ -402,7 +436,7 @@ const CallScreen = ({ route, navigation }: any) => {
 
         {!pcReady && (
           <View style={styles.loading}>
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={theme.color.primary} />
           </View>
         )}
       </SafeAreaView>
@@ -415,7 +449,6 @@ export default CallScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0E0E14',
   },
   ringbackAudio: {
     width: 0,
@@ -447,14 +480,15 @@ const styles = StyleSheet.create({
     paddingTop: 24,
   },
   peerName: {
-    color: '#fff',
     fontSize: 24,
     fontWeight: '700',
   },
   status: {
-    color: '#C9C9D4',
     fontSize: 15,
     marginTop: 6,
+  },
+  statusActive: {
+    fontSize: 17,
   },
   localPreview: {
     position: 'absolute',
@@ -463,8 +497,9 @@ const styles = StyleSheet.create({
     width: 110,
     height: 160,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
     overflow: 'hidden',
-    backgroundColor: '#1C1C26',
   },
   localPreviewInner: {
     flex: 1,
@@ -477,9 +512,9 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   controlButton: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },

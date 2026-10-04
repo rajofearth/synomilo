@@ -270,6 +270,7 @@ export const send = mutation({
         tokens,
         title: isDm ? me.displayName : (conversation?.name ?? "Wedding group"),
         body: isDm ? label : `${me.displayName}: ${label}`,
+        tag: String(conversationId),
         data: {
           type: "message",
           conversationId: String(conversationId),

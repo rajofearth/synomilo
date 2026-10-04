@@ -1,6 +1,10 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  DarkTheme,
+  DefaultTheme,
+} from '@react-navigation/native';
 import BottomTabNavigator from './BottomTabNavigator';
 import OngoingCallScreen from '../components/conversations/screens/OngoingCallScreen';
 import { SCREEN_CONSTANTS } from '../utils/AppConstants';
@@ -47,23 +51,24 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const RootStackNavigator = ({isLoggedIn, hasValidAppCredentials: _hasValidAppCredentials}: Props) => {
   const theme = useTheme();
+  const scheme: 'light' | 'dark' =
+    useColorScheme() === 'light' ? 'light' : 'dark';
+  const baseNavigationTheme = scheme === 'light' ? DefaultTheme : DarkTheme;
   const NavigationTheme = {
-    ...DefaultTheme,
+    ...baseNavigationTheme,
     colors: {
-      ...DefaultTheme.colors,
+      ...baseNavigationTheme.colors,
       background: theme.color.background1 as string,
     },
   };
 
-  const isDark = useColorScheme() === 'dark';
   const backgroundColor = theme.color.background2;
-  const barStyle = isDark ? 'light-content' : 'dark-content';
 
   return (
     <>
       <StatusBar
         backgroundColor={backgroundColor}
-        barStyle={barStyle}
+        barStyle={scheme === 'light' ? 'dark-content' : 'light-content'}
         translucent={false}
       />
       <NavigationContainer
