@@ -76,7 +76,7 @@ yarn-error.log
 
 # Secrets (never commit)
 android/keystore.properties
-**/firebase-adminsdk*.json
+*firebase-adminsdk*.json
 **/google-services.json
 .env.local
 .env.*.local
