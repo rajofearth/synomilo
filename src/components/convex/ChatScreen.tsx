@@ -16,6 +16,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  NativeModules,
   Image,
   Modal,
   Pressable,
@@ -324,6 +325,9 @@ const ChatScreen = ({ route, navigation }: any) => {
       markRead({ token, conversationId: conversationId as any }).catch(
         () => {},
       );
+      try {
+        NativeModules.Installer?.cancelNotifications?.(conversationId);
+      } catch {}
     }
   }, [token, conversationId, messages.length, markRead]);
 
@@ -901,17 +905,45 @@ const ChatScreen = ({ route, navigation }: any) => {
                         resizeMode="cover"
                       />
                     </Pressable>
+                  ) : item.kind === 'video' && item.fileUrl ? (
+                    <Pressable
+                      onPress={() => openViewer(item)}
+                      style={styles.videoCard}
+                    >
+                      <Video
+                        source={{ uri: item.fileUrl }}
+                        style={styles.videoPreview}
+                        paused
+                        muted
+                        resizeMode="cover"
+                      />
+                      <View style={styles.videoPlayOverlay} pointerEvents="none">
+                        <MaterialDesignIcons
+                          name="play-circle"
+                          size={54}
+                          color="#FFFFFF"
+                          style={styles.videoPlayIcon}
+                        />
+                      </View>
+                      {!!item.fileName && (
+                        <View style={styles.videoNamePill} pointerEvents="none">
+                          <Text numberOfLines={1} style={styles.videoNameText}>
+                            {item.fileName}
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
                   ) : item.kind !== 'text' ? (
                     <Pressable onPress={() => openViewer(item)} style={styles.fileRow}>
                       <MaterialDesignIcons
                         name={
-                          item.kind === 'video'
-                            ? 'file-video-outline'
-                            : item.kind === 'audio'
-                              ? 'music-note-outline'
+                          item.kind === 'audio'
+                            ? 'play-circle'
+                            : item.kind === 'video'
+                              ? 'file-video-outline'
                               : 'file-document-outline'
                         }
-                        size={26}
+                        size={item.kind === 'audio' ? 28 : 26}
                         color={mine ? '#fff' : theme.color.primary}
                         style={styles.fileIcon}
                       />
@@ -1849,6 +1881,41 @@ const styles = StyleSheet.create({
     height: 220,
     borderRadius: 10,
     marginBottom: 4,
+  },
+  videoCard: {
+    width: 220,
+    height: 165,
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginBottom: 4,
+    backgroundColor: '#000000',
+  },
+  videoPreview: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  videoPlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPlayIcon: {
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 5,
+  },
+  videoNamePill: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    maxWidth: 180,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  videoNameText: {
+    color: '#FFFFFF',
+    fontSize: 11,
   },
   fileRow: {
     flexDirection: 'row',

@@ -311,8 +311,12 @@ const SignUp: React.FC = () => {
       </KeyboardAvoidingView>
 
       {toastMessage && (
-        <View style={styles.toastContainer}>
-          <Text style={styles.toastText}>{toastMessage}</Text>
+        <View
+          style={[styles.toastContainer, { backgroundColor: theme.color.error }]}
+        >
+          <Text style={[styles.toastText, { color: theme.color.staticWhite }]}>
+            {toastMessage}
+          </Text>
         </View>
       )}
     </View>
@@ -364,13 +368,11 @@ const styles = StyleSheet.create({
     bottom: '8%',
     left: 20,
     right: 20,
-    backgroundColor: '#C73C3E',
     padding: 8,
     borderRadius: 16,
     alignItems: 'center',
   },
   toastText: {
-    color: '#fff',
     fontSize: 14,
   },
 });

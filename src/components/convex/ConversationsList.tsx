@@ -1,15 +1,16 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   FlatList,
   ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FAB } from 'react-native-paper';
+import { Button, Dialog, FAB, Portal } from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useQuery, useMutation } from 'convex/react';
@@ -59,6 +60,7 @@ const ConversationsList = ({ navigation }: any) => {
     token ? { token } : 'skip',
   ) as ConversationRow[] | undefined;
   const leaveConversation = useMutation(api.conversations.leave);
+  const [leaveTarget, setLeaveTarget] = useState<ConversationRow | null>(null);
 
   const openChat = useCallback(
     (item: ConversationRow) => {
@@ -70,38 +72,32 @@ const ConversationsList = ({ navigation }: any) => {
     [navigation],
   );
 
-  const confirmLeave = useCallback(
-    (item: ConversationRow) => {
+  const confirmLeave = useCallback((item: ConversationRow) => {
+    setLeaveTarget(item);
+  }, []);
+
+  const dismissLeave = useCallback(() => {
+    setLeaveTarget(null);
+  }, []);
+
+  const performLeave = useCallback(async () => {
+    const item = leaveTarget;
+    if (!item || !token) {
+      return;
+    }
+    setLeaveTarget(null);
+    try {
+      await leaveConversation({
+        token,
+        conversationId: item._id as any,
+      });
+    } catch (error) {
       Alert.alert(
-        'Leave conversation',
-        `Leave "${item.title}"?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Leave',
-            style: 'destructive',
-            onPress: async () => {
-              if (!token) {
-                return;
-              }
-              try {
-                await leaveConversation({
-                  token,
-                  conversationId: item._id as any,
-                });
-              } catch (error) {
-                Alert.alert(
-                  'Could not leave',
-                  convexErrorMessage(error, 'Please try again.'),
-                );
-              }
-            },
-          },
-        ],
+        'Could not leave',
+        convexErrorMessage(error, 'Please try again.'),
       );
-    },
-    [token, leaveConversation],
-  );
+    }
+  }, [leaveTarget, token, leaveConversation]);
 
   const data = useMemo(() => conversations ?? [], [conversations]);
 
@@ -163,7 +159,7 @@ const ConversationsList = ({ navigation }: any) => {
           onRefresh={() => {}}
           refreshing={false}
           renderItem={({ item }) => (
-            <TouchableOpacity
+            <Pressable
               style={({ pressed }) => [
                 styles.row,
                 pressed && { backgroundColor: theme.color.background3 },
@@ -251,7 +247,7 @@ const ConversationsList = ({ navigation }: any) => {
                   )}
                 </View>
               </View>
-            </TouchableOpacity>
+            </Pressable>
           )}
         />
       )}
@@ -267,6 +263,41 @@ const ConversationsList = ({ navigation }: any) => {
         )}
         onPress={() => navigation.navigate('Groups')}
       />
+      <Portal>
+        <Dialog
+          visible={leaveTarget != null}
+          onDismiss={dismissLeave}
+          style={[styles.dialog, { backgroundColor: theme.color.background2 }]}
+        >
+          <Dialog.Title style={{ color: theme.color.textPrimary }}>
+            Leave conversation
+          </Dialog.Title>
+          <Dialog.Content>
+            <Text
+              style={[
+                theme.typography.body.medium,
+                { color: theme.color.textSecondary },
+              ]}
+            >
+              {leaveTarget ? `Leave "${leaveTarget.title}"?` : ''}
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={dismissLeave}
+              textColor={theme.color.primary as string}
+            >
+              Cancel
+            </Button>
+            <Button
+              onPress={performLeave}
+              textColor={theme.color.error as string}
+            >
+              Leave
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </SafeAreaView>
   );
 };
@@ -337,6 +368,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   rowAvatarGroup: {
     borderRadius: 16,
@@ -347,6 +379,7 @@ const styles = StyleSheet.create({
   },
   rowBody: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 12,
   },
   rowTop: {
@@ -386,5 +419,8 @@ const styles = StyleSheet.create({
     right: 20,
     bottom: 24,
     borderRadius: 20,
+  },
+  dialog: {
+    borderRadius: 28,
   },
 });

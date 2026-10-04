@@ -1,12 +1,10 @@
 import './gesture-handler';
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Platform,
   View,
-  PlatformColor,
   AppState,
-  AppStateStatus,
   Linking,
+  useColorScheme,
 } from 'react-native';
 import {
   CometChatI18nProvider,
@@ -20,6 +18,7 @@ import {
 } from '@cometchat/chat-uikit-react-native';
 import { ConvexProvider, useMutation } from 'convex/react';
 import { PaperProvider, useTheme } from 'react-native-paper';
+import type { MD3Theme } from 'react-native-paper';
 import {
   buildPaperTheme,
   staticFallbackTheme,
@@ -63,6 +62,21 @@ import { navigate } from './src/navigation/NavigationService';
 // Listener ID for registering and removing CometChat listeners.
 const listenerId = 'app';
 
+const buildCometChatPalette = (paper: MD3Theme) => ({
+  primary: paper.colors.primary as string,
+  background1: paper.colors.background as string,
+  background2: paper.colors.surface as string,
+  background3: paper.colors.surfaceVariant as string,
+  textPrimary: paper.colors.onSurface as string,
+  textSecondary: paper.colors.onSurfaceVariant as string,
+  textTertiary: paper.colors.outline as string,
+  borderDefault: paper.colors.outlineVariant as string,
+  borderLight: paper.colors.outlineVariant as string,
+  error: paper.colors.error as string,
+  extendedPrimary50: paper.colors.primaryContainer as string,
+  iconSecondary: paper.colors.onSurfaceVariant as string,
+});
+
 const AppInner = (): React.ReactElement => {
   const [callReceived, setCallReceived] = useState(false);
   const incomingCall = useRef<CometChat.Call | CometChat.CustomMessage | null>(
@@ -72,6 +86,12 @@ const AppInner = (): React.ReactElement => {
   const [hasValidAppCredentials, setHasValidAppCredentials] = useState(false);
   const styleConfig = useConfig(state => state?.settings?.style);
   const paperTheme = useTheme();
+  const scheme: 'light' | 'dark' =
+    useColorScheme() === 'light' ? 'light' : 'dark';
+  const lightPaperTheme =
+    scheme === 'light' ? paperTheme : staticFallbackTheme('light');
+  const darkPaperTheme =
+    scheme === 'dark' ? paperTheme : staticFallbackTheme('dark');
 
   const { user: sessionUser, isLoading: sessionLoading, token } = useSession();
   const isLoggedIn = !!sessionUser;
@@ -81,19 +101,11 @@ const AppInner = (): React.ReactElement => {
 
   const theme: { light: DeepPartial<CometChatTheme>; dark: DeepPartial<CometChatTheme> } = {
     light: {
-      color: {
-        primary: paperTheme.colors.primary as string,
-        textPrimary: styleConfig.color.primaryTextLight,
-        textSecondary: styleConfig.color.secondaryTextLight,
-      },
+      color: { ...buildCometChatPalette(lightPaperTheme) },
       typography: createTypography(styleConfig.typography.font),
     },
     dark: {
-      color: {
-        primary: paperTheme.colors.primary as string,
-        textPrimary: styleConfig.color.primaryTextDark,
-        textSecondary: styleConfig.color.secondaryTextDark,
-      },
+      color: { ...buildCometChatPalette(darkPaperTheme) },
       typography: createTypography(styleConfig.typography.font),
     },
   };
@@ -412,10 +424,7 @@ const AppInner = (): React.ReactElement => {
       <View
         style={{
           flex: 1,
-          backgroundColor: Platform.select({
-            ios: PlatformColor('systemBackgroundColor'),
-            android: PlatformColor('?android:attr/colorBackground'),
-          }),
+          backgroundColor: paperTheme.colors.background,
         }}
       />
     );
@@ -450,13 +459,26 @@ const AppInner = (): React.ReactElement => {
 };
 
 const App = (): React.ReactElement => {
-  const [theme, setTheme] = useState(staticFallbackTheme);
+  const scheme: 'light' | 'dark' =
+    useColorScheme() === 'light' ? 'light' : 'dark';
+  const [theme, setTheme] = useState<MD3Theme>(() =>
+    staticFallbackTheme(scheme),
+  );
 
   useEffect(() => {
-    buildPaperTheme()
-      .then(setTheme)
+    let cancelled = false;
+    setTheme(staticFallbackTheme(scheme));
+    buildPaperTheme(scheme)
+      .then(next => {
+        if (!cancelled) {
+          setTheme(next);
+        }
+      })
       .catch(() => {});
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [scheme]);
 
   return (
     <ConvexProvider client={convex}>
