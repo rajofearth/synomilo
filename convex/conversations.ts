@@ -41,6 +41,7 @@ export const list = query({
 
       let title = conv.name ?? "Chat";
       let emoji: string | null = conv.emoji ?? null;
+      let avatarUrl: string | null = conv.avatarUrl ?? null;
       let otherUserId: Id<"users"> | null = null;
       if (conv.type === "dm") {
         const other = members.find((x) => x.userId !== me._id);
@@ -50,6 +51,7 @@ export const list = query({
             title = otherUser.displayName;
             otherUserId = otherUser._id;
             emoji = null;
+            avatarUrl = otherUser.avatarUrl ?? null;
           }
         }
       }
@@ -77,6 +79,7 @@ export const list = query({
         type: conv.type,
         title,
         emoji,
+        avatarUrl,
         otherUserId,
         memberCount: members.length,
         lastMessageAt: conv.lastMessageAt ?? conv.createdAt,
@@ -117,11 +120,13 @@ export const get = query({
     }
     let title = conv.name ?? "Chat";
     let emoji: string | null = conv.emoji ?? null;
+    let avatarUrl: string | null = conv.avatarUrl ?? null;
     if (conv.type === "dm") {
       const other = members.find((x) => x._id !== me._id);
       if (other) {
         title = other.displayName;
         emoji = null;
+        avatarUrl = other.avatarUrl ?? null;
       }
     }
     return {
@@ -129,6 +134,7 @@ export const get = query({
       type: conv.type,
       title,
       emoji,
+      avatarUrl,
       createdBy: conv.createdBy,
       members,
     };
@@ -289,22 +295,35 @@ export const updateGroup = mutation({
   args: {
     token: v.string(),
     conversationId: v.id("conversations"),
-    name: v.string(),
+    name: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { token, conversationId, name }) => {
+  handler: async (ctx, { token, conversationId, name, avatarUrl }) => {
     const me = await requireUser(ctx, token);
     const membership = await membershipFor(ctx, conversationId, me._id);
     if (!membership || membership.role !== "owner") {
       throw new ConvexError("Only the group owner can edit the group");
     }
-    const trimmed = name.trim();
-    if (trimmed.length < 2 || trimmed.length > 50) {
-      throw new ConvexError("Enter a group name");
+    if (name === undefined && avatarUrl === undefined) {
+      throw new ConvexError("Nothing to update");
     }
-    await ctx.db.patch(conversationId, {
-      name: trimmed,
+    const patch: { name?: string; avatarUrl?: string; updatedAt: number } = {
       updatedAt: Date.now(),
-    });
+    };
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (trimmed.length < 2 || trimmed.length > 50) {
+        throw new ConvexError("Enter a group name");
+      }
+      patch.name = trimmed;
+    }
+    if (avatarUrl !== undefined) {
+      if (!avatarUrl.startsWith("http")) {
+        throw new ConvexError("Invalid image");
+      }
+      patch.avatarUrl = avatarUrl;
+    }
+    await ctx.db.patch(conversationId, patch);
     return true;
   },
 });

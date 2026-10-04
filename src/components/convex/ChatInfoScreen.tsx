@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Dimensions, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useMutation, useQuery } from 'convex/react';
 import dayjs from 'dayjs';
+import { launchImageLibrary } from 'react-native-image-picker';
 import {
   ActivityIndicator,
   Appbar,
@@ -42,6 +43,16 @@ const formatBytes = (bytes: number | null): string => {
 const initialsFor = (name: string): string =>
   name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('');
 
+const uriToBlob = (uri: string): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = () => resolve(xhr.response);
+    xhr.onerror = () => reject(new Error('Could not read the selected photo'));
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send();
+  });
+
 const mimeIcon = (mime: string | null): string =>
   mime?.startsWith('image/') ? 'file-image'
   : mime?.startsWith('video/') ? 'file-video'
@@ -69,6 +80,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
 
   const title = conversation?.title ?? fallbackTitle;
   const isGroup = conversation?.type === 'group';
+  const groupAvatarUrl = conversation?.avatarUrl ?? null;
   const members = useMemo(() => conversation?.members ?? [], [conversation?.members]);
   const myMembership = useMemo(
     () => members.find(m => m._id === user?._id),
@@ -82,6 +94,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
   const removeMember = useMutation(api.conversations.removeMember);
   const addMembers = useMutation(api.conversations.addMembers);
   const updateGroup = useMutation(api.conversations.updateGroup);
+  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const leaveGroup = useMutation(api.conversations.leave);
   const deleteGroup = useMutation(api.conversations.deleteGroup);
 
@@ -104,6 +117,36 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [working, setWorking] = useState(false);
+  const [pendingAvatarStorageId, setPendingAvatarStorageId] = useState<any>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const uploadedAvatarUrl = useQuery(
+    api.files.url,
+    token && pendingAvatarStorageId
+      ? { token, storageId: pendingAvatarStorageId }
+      : 'skip',
+  );
+
+  useEffect(() => {
+    if (!pendingAvatarStorageId || uploadedAvatarUrl === undefined) {
+      return;
+    }
+    setPendingAvatarStorageId(null);
+    setUploadingAvatar(false);
+    if (!uploadedAvatarUrl || !token || !conversationId) {
+      setSnackbar('Could not load the uploaded photo');
+      return;
+    }
+    updateGroup({
+      token,
+      conversationId: conversationId as any,
+      avatarUrl: uploadedAvatarUrl,
+    })
+      .then(() => setSnackbar('Group photo updated'))
+      .catch(error =>
+        setSnackbar(convexErrorMessage(error, 'Could not update the group photo')),
+      );
+  }, [uploadedAvatarUrl, pendingAvatarStorageId, token, conversationId, updateGroup]);
 
   const mutedRow = useMemo(() => (rows ?? []).find(r => r._id === conversationId), [rows, conversationId]);
   const muted = mutedOverride ?? mutedRow?.muted ?? false;
@@ -166,6 +209,32 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
       setSavingName(false);
     }
   }, [token, conversationId, savingName, updateGroup, nameDraft]);
+
+  const pickGroupPhoto = useCallback(async () => {
+    if (!token || uploadingAvatar) return;
+    const result = await launchImageLibrary({
+      mediaType: 'photo',
+      selectionLimit: 1,
+    });
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setUploadingAvatar(true);
+    try {
+      const postUrl = await generateUploadUrl({ token });
+      const blob = await uriToBlob(asset.uri);
+      const mime = asset.type ?? 'image/jpeg';
+      const response = await fetch(postUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': mime },
+        body: blob,
+      });
+      const { storageId } = await response.json();
+      setPendingAvatarStorageId(storageId);
+    } catch (error) {
+      setUploadingAvatar(false);
+      setSnackbar(convexErrorMessage(error, 'Could not upload the photo'));
+    }
+  }, [token, uploadingAvatar, generateUploadUrl]);
 
   const confirmRemove = useCallback(async () => {
     if (!token || !conversationId || !removeTarget || removing) return;
@@ -383,15 +452,38 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
-            <Avatar.Text
-              size={80}
-              label={initialsFor(title).toUpperCase()}
-              color={c.textPrimary}
-              style={{
-                backgroundColor: c.extendedPrimary50,
-                borderRadius: isGroup ? 24 : 40,
-              }}
-            />
+            <View style={styles.heroAvatarWrap}>
+              {isGroup && groupAvatarUrl ? (
+                <Image source={{ uri: groupAvatarUrl }} style={styles.heroAvatarImage} />
+              ) : (
+                <Avatar.Text
+                  size={80}
+                  label={initialsFor(title).toUpperCase()}
+                  color={c.textPrimary}
+                  style={{
+                    backgroundColor: c.extendedPrimary50,
+                    borderRadius: isGroup ? 24 : 40,
+                  }}
+                />
+              )}
+              {isOwner && (
+                <TouchableOpacity
+                  style={[
+                    styles.heroCameraBadge,
+                    { backgroundColor: colors.primary, borderColor: c.background1 },
+                  ]}
+                  onPress={pickGroupPhoto}
+                  disabled={uploadingAvatar}
+                  activeOpacity={0.8}
+                >
+                  {uploadingAvatar ? (
+                    <ActivityIndicator size={14} color={colors.onPrimary} />
+                  ) : (
+                    <MaterialDesignIcons name="camera" size={16} color={colors.onPrimary} />
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
             <Text style={[theme.typography.heading3.bold, { color: c.textPrimary, marginTop: 12 }]}>{title}</Text>
             <Text style={[theme.typography.body.medium, { color: c.textSecondary }]}>
               {isGroup ? `${members.length} ${members.length === 1 ? 'member' : 'members'}` : 'Direct message'}
@@ -637,6 +729,19 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { paddingBottom: 40 },
   hero: { alignItems: 'center', paddingTop: 24, paddingBottom: 20, paddingHorizontal: 16 },
+  heroAvatarWrap: { position: 'relative' },
+  heroAvatarImage: { width: 96, height: 96, borderRadius: 24 },
+  heroCameraBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   quickRow: { flexDirection: 'row', justifyContent: 'space-evenly', paddingHorizontal: 12, marginBottom: 20 },
   quickAction: { alignItems: 'center', minWidth: 72 },
   quickActionIcon: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },

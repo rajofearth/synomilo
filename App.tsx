@@ -86,12 +86,6 @@ const AppInner = (): React.ReactElement => {
   const [hasValidAppCredentials, setHasValidAppCredentials] = useState(false);
   const styleConfig = useConfig(state => state?.settings?.style);
   const paperTheme = useTheme();
-  const scheme: 'light' | 'dark' =
-    useColorScheme() === 'light' ? 'light' : 'dark';
-  const lightPaperTheme =
-    scheme === 'light' ? paperTheme : staticFallbackTheme('light');
-  const darkPaperTheme =
-    scheme === 'dark' ? paperTheme : staticFallbackTheme('dark');
 
   const { user: sessionUser, isLoading: sessionLoading, token } = useSession();
   const isLoggedIn = !!sessionUser;
@@ -101,11 +95,11 @@ const AppInner = (): React.ReactElement => {
 
   const theme: { light: DeepPartial<CometChatTheme>; dark: DeepPartial<CometChatTheme> } = {
     light: {
-      color: { ...buildCometChatPalette(lightPaperTheme) },
+      color: { ...buildCometChatPalette(paperTheme) },
       typography: createTypography(styleConfig.typography.font),
     },
     dark: {
-      color: { ...buildCometChatPalette(darkPaperTheme) },
+      color: { ...buildCometChatPalette(paperTheme) },
       typography: createTypography(styleConfig.typography.font),
     },
   };
