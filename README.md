@@ -1,95 +1,61 @@
+# synomiló
 
-<p align="center">
-  <img alt="CometChat" src="https://assets.cometchat.io/website/images/logos/banner.png">
-</p>
+A private chat app for two people and their wedding group. Convex is the backend; the UI is React Native with Material 3.
 
-# React Native Sample App with Push Notifications by CometChat
+## What it does
 
-This is a reference application showcasing the integration of [CometChat's React Native UI Kit](https://www.cometchat.com/docs/ui-kit/react-native/5.0/overview) in a React Native project. It demonstrates how to implement real-time messaging and voice/video calling features with ease.
+- Direct messages and wedding groups, text and attachments
+- Voice and video calls over WebRTC, signaled through Convex
+- Push notifications: message notifications per chat, full-screen incoming call ringing
+- Read receipts, typing indicators, replies, forwarding, soft-delete tombstones
+- Group management for owners: rename, picture, add and remove members
+- Light and dark themes that follow the system, with wallpaper accent colors on Android 12+
+- Self-hosted updates: the app checks Convex for a new build, downloads it, and starts the installer
 
-<div style="display: flex; align-items: center; justify-content: center">
-   <img src="../../screenshots/overview_cometchat_screens.png" />
-</div>
+## Stack
 
+- React Native 0.81, new architecture, Hermes
+- Convex: auth, data, files, call signaling, update distribution
+- react-native-paper 5 with Material Design 3, MDI icons
+- notifee for call notifications, react-native-webrtc for media
+- firebase-admin (v14 modular API) for FCM push from Convex actions
 
-## Prerequisites
+## Layout
 
-Sign up for a [CometChat](https://app.cometchat.com/) account to obtain your app credentials: _`App ID`_, _`Region`_, and _`Auth Key`_
+- `convex/`: backend functions (auth, users, conversations, messages, reactions, files, calls, push, updates)
+- `src/components/convex/`: the chat screens (list, chat, info, profile, settings, forwarding)
+- `src/components/calls/`: call screen and incoming call overlay
+- `src/notifications/`: push handling, call notifications, headless call actions
+- `src/updater/`: in-app update checker and installer UI
+- `android/`: native project, including the DynamicColor and Installer modules
+- `scripts/publish-release.mjs`: uploads an APK to Convex and marks it as the latest release
 
-- **Node.js** 18 or higher
-- **React Native** Version 0.77 or later (up to the latest version) 
+## Development
 
-**iOS**
-- XCode
-- Pod (CocoaPods) for iOS
-- An iOS device or emulator with iOS 12.0 or above.
-- Ensure that you have configured the provisioning profile in Xcode to run the app on a physical device.
+```
+npm install
+npx convex dev
+npm start
+npm run android
+```
 
-**Android**
-- Android Studio
-- Android device or emulator with Android version 5.0 or above.
+Push credentials and signing live outside version control: `android/keystore.properties`, `android/app/synomilo-release.keystore`, and `android/app/google-services.json`. The Convex deployment reads `FCM_SERVICE_ACCOUNT` for push, and `GITHUB_TOKEN` plus `GITHUB_REPO` are no longer needed by the updater.
 
+## Building and releasing
 
-## Installation
+1. Bump `versionCode` and `versionName` in `android/app/build.gradle`.
+2. Build the signed dual-ABI APK: `run-build-release-both.bat` (or `cd android && gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a`).
+3. Publish it to Convex so installed apps can update:
 
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/cometchat/cometchat-uikit-react-native.git
-   ```
+```
+node scripts/publish-release.mjs 1.0.5 android/app/build/outputs/apk/release/app-release.apk "Release notes"
+```
 
-1. Change into the specific app's directory (e.g., SampleAppWithPushNotifications).
-   ```sh
-     cd examples/SampleAppWithPushNotifications
-   ```
-   
-1. Run `npm install` to install the dependencies.
+4. Optionally attach the same APK to a GitHub release with `gh release create`.
 
-1. `[Optional]` Configure CometChat credentials:
-    - Open the `AppConstants.tsx` file located at `examples/SampleApp/src/utils/AppConstants.tsx` and enter your CometChat _`appId`_, _`region`_, and _`authKey`_:
-      ```ts
-      export const AppConstants = {
-          appId: 'YOUR_APP_ID',
-          authKey: 'YOUR_AUTH_KEY',
-          region: 'REGION',
-          //other properties
-      }
-      ```
+Installed apps poll every minute, show a dialog when a newer version appears, download the APK, and hand it to the Android installer. If install permission is missing, the app opens the system settings for it.
 
-1. Push Notification Setup guide
-   - APNs
-      - Follow our [APNs integration](https://www.cometchat.com/docs/notifications/push-integration#add-apns-credentials).
-   
-   - FCM
-      - Go to the [Firebase Console](https://console.firebase.google.com/) and create a project.
-      - Add your Android app to the Firebase project and download the `google-services.json` file.
-      - Place the `google-services.json` file in the `SampleAppWithPushNotification/android/app` directory of your project.
+## Notes
 
-   - CometChat Push Notification 
-      - Go to the [Notification Documentation](https://www.cometchat.com/docs/notifications/push-integration) and follow integration steps.
-
-1. Update the `fcmProviderId` & `apnProviderId` from the step 6 in
-      ```ts
-      export const AppConstants = {
-         fcmProviderId: '',
-         apnProviderId: '',
-      }
-      ```
-
-
-1. For iOS, install dependencies after navigating to ios:
-   ```sh
-    cd ios
-    pod install
-   ```
-
-1. Run the app on a device or emulator from the repo root.
-   ```sh
-    npm start
-    npm run android
-    npm run ios
-   ```
-
-
-## Help and Support
-
-For issues running the project or integrating with our UI Kits, consult our [documentation](https://www.cometchat.com/docs/ui-kit/react-native/5.0/getting-started) or create a [support ticket](https://help.cometchat.com/hc/en-us). You can also access real-time support via the [CometChat Dashboard](http://app.cometchat.com/).
+- The app forces no theme; it follows the system scheme and derives accent colors from the Android wallpaper palette when available.
+- Call notifications use the device's default ringtone and a full-screen intent so the phone rings like a normal call.

@@ -35,8 +35,9 @@ export const sendToTokens = internalAction({
     body: v.string(),
     data: v.optional(v.record(v.string(), v.string())),
     tag: v.optional(v.string()),
+    channelId: v.optional(v.string()),
   },
-  handler: async (_ctx, { tokens, title, body, data, tag }) => {
+  handler: async (_ctx, { tokens, title, body, data, tag, channelId }) => {
     if (tokens.length === 0) {
       return { sent: 0 };
     }
@@ -49,7 +50,7 @@ export const sendToTokens = internalAction({
         priority: "high",
         ttl: 86400000,
         notification: {
-          channelId: "default",
+          channelId: channelId ?? "default",
           sound: "default",
           ...(tag !== undefined ? { tag } : {}),
         },

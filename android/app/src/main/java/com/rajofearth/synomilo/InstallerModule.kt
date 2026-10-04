@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.Arguments
@@ -47,6 +48,48 @@ class InstallerModule(reactContext: ReactApplicationContext) :
             promise.resolve(true)
         } catch (error: Exception) {
             promise.reject("E_INSTALL_SETTINGS", error.message, error)
+        }
+    }
+
+    @ReactMethod
+    fun isIgnoringBatteryOptimizations(promise: Promise) {
+        try {
+            val powerManager = reactApplicationContext.getSystemService(
+                Context.POWER_SERVICE,
+            ) as PowerManager
+            promise.resolve(
+                powerManager.isIgnoringBatteryOptimizations(
+                    reactApplicationContext.packageName,
+                ),
+            )
+        } catch (error: Exception) {
+            promise.reject("E_BATTERY_OPTIMIZATION", error.message, error)
+        }
+    }
+
+    @ReactMethod
+    fun openBatterySettings() {
+        try {
+            val powerManager = reactApplicationContext.getSystemService(
+                Context.POWER_SERVICE,
+            ) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(
+                    reactApplicationContext.packageName,
+                )
+            ) {
+                val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                request.data = Uri.parse("package:${reactApplicationContext.packageName}")
+                request.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    reactApplicationContext.startActivity(request)
+                    return
+                } catch (error: Exception) {
+                }
+            }
+            val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactApplicationContext.startActivity(fallback)
+        } catch (error: Exception) {
         }
     }
 

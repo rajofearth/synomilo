@@ -1,9 +1,10 @@
 import './gesture-handler';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   AppState,
   Linking,
+  NativeModules,
   useColorScheme,
 } from 'react-native';
 import {
@@ -17,7 +18,7 @@ import {
   UIKitSettings,
 } from '@cometchat/chat-uikit-react-native';
 import { ConvexProvider, useMutation } from 'convex/react';
-import { PaperProvider, useTheme } from 'react-native-paper';
+import { Button, Dialog, PaperProvider, Portal, Text, useTheme } from 'react-native-paper';
 import type { MD3Theme } from 'react-native-paper';
 import {
   buildPaperTheme,
@@ -188,6 +189,18 @@ const AppInner = (): React.ReactElement => {
             'Messages' as never,
             { conversationId: data.conversationId } as never,
           );
+          return;
+        }
+        if (data.type === 'call' && data.callId) {
+          acceptCall({ token: sessionToken, callId: data.callId as any }).catch(
+            () => {},
+          );
+          navigate('CallScreen', {
+            callId: data.callId,
+            type: data.callType === 'video' ? 'video' : 'audio',
+            role: 'callee',
+            peerName: data.callerName ?? 'Unknown',
+          });
         }
       };
       unsubTap = onNotificationTap(openFromData, openFromData);
@@ -198,7 +211,7 @@ const AppInner = (): React.ReactElement => {
       unsubTap?.();
       unsubRefresh?.();
     };
-  }, [sessionUser?._id, token, setPushToken]);
+  }, [sessionUser?._id, token, setPushToken, acceptCall]);
 
   /**
    * Notification channels + in-app ringing for calls that arrive while the
@@ -379,6 +392,46 @@ const AppInner = (): React.ReactElement => {
     };
   }, []);
 
+  const [batteryPromptVisible, setBatteryPromptVisible] = useState(false);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      return;
+    }
+    let cancelled = false;
+    const checkBatteryOptimizations = async () => {
+      try {
+        const prompted = await AsyncStorage.getItem('synomilo.batteryPrompted');
+        if (prompted || cancelled) {
+          return;
+        }
+        const installer = NativeModules.Installer;
+        if (!installer?.isIgnoringBatteryOptimizations) {
+          return;
+        }
+        const ignoring = await installer.isIgnoringBatteryOptimizations();
+        if (!cancelled && ignoring === false) {
+          setBatteryPromptVisible(true);
+        }
+      } catch {}
+    };
+    checkBatteryOptimizations();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
+
+  const dismissBatteryPrompt = useCallback(() => {
+    setBatteryPromptVisible(false);
+    AsyncStorage.setItem('synomilo.batteryPrompted', 'true').catch(() => {});
+  }, []);
+
+  const allowBatteryOptimizations = useCallback(() => {
+    setBatteryPromptVisible(false);
+    NativeModules.Installer?.openBatterySettings?.();
+    AsyncStorage.setItem('synomilo.batteryPrompted', 'true').catch(() => {});
+  }, []);
+
   // Card Messages — app-level dispatcher for card element actions.
   useEffect(() => {
     const cardActionListenerId = 'cardAction_app';
@@ -445,6 +498,25 @@ const AppInner = (): React.ReactElement => {
               />
             </SafeAreaView>
             {isLoggedIn && <IncomingCallOverlay />}
+            <Portal>
+              <Dialog
+                visible={batteryPromptVisible}
+                onDismiss={dismissBatteryPrompt}
+                style={{ borderRadius: 28 }}
+              >
+                <Dialog.Title>Keep calls reliable</Dialog.Title>
+                <Dialog.Content>
+                  <Text variant="bodyMedium">
+                    Allow synomiló to run in the background so incoming calls
+                    arrive on time. This opens a system setting.
+                  </Text>
+                </Dialog.Content>
+                <Dialog.Actions>
+                  <Button onPress={dismissBatteryPrompt}>Not now</Button>
+                  <Button onPress={allowBatteryOptimizations}>Allow</Button>
+                </Dialog.Actions>
+              </Dialog>
+            </Portal>
           </CometChatI18nProvider>
         </CometChatThemeProvider>
       </SafeAreaProvider>
