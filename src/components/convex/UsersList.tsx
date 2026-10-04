@@ -1,0 +1,228 @@
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
+import { useSession } from '../../auth/SessionProvider';
+import { convexErrorMessage } from '../../utils/convexError';
+
+type UserRow = {
+  _id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+};
+
+const initialsFor = (name: string): string =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase() ?? '')
+    .join('');
+
+const UsersList = ({ navigation }: any) => {
+  const theme = useTheme();
+  const { token } = useSession();
+  const users = useQuery(api.users.list, token ? { token } : 'skip') as
+    | UserRow[]
+    | undefined;
+  const createDM = useMutation(api.conversations.createDM);
+  const [query, setQuery] = useState('');
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  const data = useMemo(() => {
+    const list = users ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return list;
+    }
+    return list.filter(
+      user =>
+        user.displayName.toLowerCase().includes(q) ||
+        user.username.toLowerCase().includes(q),
+    );
+  }, [users, query]);
+
+  const openChat = useCallback(
+    async (user: UserRow) => {
+      if (!token || openingId) {
+        return;
+      }
+      setOpeningId(user._id);
+      try {
+        const conversationId = await createDM({
+          token,
+          otherUserId: user._id as any,
+        });
+        navigation.navigate('Messages', {
+          conversationId,
+          title: user.displayName,
+        });
+      } catch (error) {
+        Alert.alert(
+          'Could not open chat',
+          convexErrorMessage(error, 'Please try again.'),
+        );
+      } finally {
+        setOpeningId(null);
+      }
+    },
+    [token, openingId, createDM, navigation],
+  );
+
+  return (
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: theme.color.background2 }]}
+      edges={['top']}
+    >
+      <Text
+        style={[
+          theme.typography.heading1.bold,
+          styles.title,
+          { color: theme.color.textPrimary },
+        ]}
+      >
+        Users
+      </Text>
+      <View
+        style={[
+          styles.searchWrap,
+          { backgroundColor: theme.color.background3 },
+        ]}
+      >
+        <TextInput
+          style={[styles.search, { color: theme.color.textPrimary }]}
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search"
+          placeholderTextColor={theme.color.textTertiary}
+        />
+      </View>
+
+      {users === undefined ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.color.primary} />
+        </View>
+      ) : (
+        <FlatList
+          data={data}
+          keyExtractor={item => item._id}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => openChat(item)}
+              disabled={!!openingId}
+            >
+              <View
+                style={[
+                  styles.avatar,
+                  { backgroundColor: theme.color.extendedPrimary50 },
+                ]}
+              >
+                <Text
+                  style={[styles.avatarText, { color: theme.color.primary }]}
+                >
+                  {initialsFor(item.displayName)}
+                </Text>
+              </View>
+              <View style={styles.rowBody}>
+                <Text
+                  style={[
+                    theme.typography.body.medium,
+                    { color: theme.color.textPrimary },
+                  ]}
+                >
+                  {item.displayName}
+                </Text>
+                <Text
+                  style={[
+                    theme.typography.caption1.regular,
+                    { color: theme.color.textSecondary },
+                  ]}
+                >
+                  @{item.username}
+                </Text>
+              </View>
+              {openingId === item._id && (
+                <ActivityIndicator size="small" color={theme.color.primary} />
+              )}
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={
+            <View style={styles.center}>
+              <Text
+                style={[
+                  theme.typography.body.medium,
+                  { color: theme.color.textSecondary },
+                ]}
+              >
+                {query
+                  ? 'No users match your search.'
+                  : 'No other users yet. Invite someone to join synomiló.'}
+              </Text>
+            </View>
+          }
+        />
+      )}
+    </SafeAreaView>
+  );
+};
+
+export default UsersList;
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  title: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  searchWrap: {
+    marginHorizontal: 16,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  search: {
+    paddingVertical: 10,
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  rowBody: {
+    flex: 1,
+    marginLeft: 12,
+  },
+});

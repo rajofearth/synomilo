@@ -1,0 +1,73 @@
+
+Welcome to React Native v0.81
+Starting dev server on http://localhost:8081
+
+
+                        ▒▒▓▓▓▓▒▒
+                     ▒▓▓▓▒▒░░▒▒▓▓▓▒
+                  ▒▓▓▓▓░░░▒▒▒▒░░░▓▓▓▓▒
+                 ▓▓▒▒▒▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▓▓
+                 ▓▓░░░░░▒▓▓▓▓▓▓▒░░░░░▓▓
+                 ▓▓░░▓▓▒░░░▒▒░░░▒▓▒░░▓▓
+                 ▓▓░░▓▓▓▓▓▒▒▒▒▓▓▓▓▒░░▓▓
+                 ▓▓░░▓▓▓▓▓▓▓▓▓▓▓▓▓▒░░▓▓
+                 ▓▓▒░░▒▒▓▓▓▓▓▓▓▓▒░░░▒▓▓
+                  ▒▓▓▓▒░░░▒▓▓▒░░░▒▓▓▓▒
+                     ▒▓▓▓▒░░░░▒▓▓▓▒
+                        ▒▒▓▓▓▓▒▒
+
+
+                Welcome to Metro v0.83.5
+              Fast - Scalable - Integrated
+
+
+ INFO  Dev server ready. Press Ctrl+C to exit.
+ INFO  Key commands available:
+
+   r  - reload app(s)
+   d  - open Dev Menu
+   j  - open DevTools
+
+ BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (0/1)
+ BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 1% (1/1)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (28/119)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (72/202)
+transform[stderr]: The exported identifier "IStreamData" is not declared in Babel's scope tracker
+transform[stderr]: as a JavaScript value binding, and "@babel/plugin-transform-typescript"
+transform[stderr]: never encountered it as a TypeScript type declaration.
+transform[stderr]: It will be treated as a JavaScript value.
+transform[stderr]: 
+transform[stderr]: This problem is likely caused by another plugin injecting
+transform[stderr]: "IStreamData" without registering it in the scope tracker. If you are the author
+transform[stderr]:  of that plugin, please use "scope.registerDeclaration(declarationPath)".
+transform[stderr]: The exported identifier "QueueCompletionCallback" is not declared in Babel's scope tracker
+transform[stderr]: as a JavaScript value binding, and "@babel/plugin-transform-typescript"
+transform[stderr]: never encountered it as a TypeScript type declaration.
+transform[stderr]: It will be treated as a JavaScript value.
+transform[stderr]: 
+transform[stderr]: This problem is likely caused by another plugin injecting
+transform[stderr]: "QueueCompletionCallback" without registering it in the scope tracker. If you are the author
+transform[stderr]:  of that plugin, please use "scope.registerDeclaration(declarationPath)".
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (183/398)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (280/554)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (452/745)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (624/1262)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (681/1473)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (683/1638)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (802/1724)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 56% (1304/1852)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓▓░░░░░░ 63% (1586/1984)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓▓▓░░░░░ 74% (1863/2161)
+ WARN  Attempted to import the module "P:\Projects\cometchat-sample-app\node_modules\react-native-webrtc\node_modules\event-target-shim\index" which is not listed in the "exports" of "P:\Projects\cometchat-sample-app\node_modules\react-native-webrtc\node_modules\event-target-shim" under the requested subpath "./index". Falling back to file-based resolution. Consider updating the call site or asking the package maintainer(s) to expose this API.
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓░░░ 84% (2197/2394)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 96% (2444/2504)
+ BUNDLE  ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 97% (2535/2616)
+ BUNDLE  ./index.js 
+ INFO  Connection established to app='com.cometchat.sampleapp.reactnative.android' on device='CPH2421 - 11 - API 30'.
+ INFO  [1m[7m💡 JavaScript logs have moved![22m They can now be viewed in React Native DevTools. Tip: Type [1mj[22m in the terminal to open (requires Google Chrome or Microsoft Edge).[27m
+ ERROR  [timeout] connection terminated with Device for app='com.cometchat.sampleapp.reactnative.android' on device='CPH2421 - 11 - API 30' after not responding for 60 seconds.
+ INFO  Connection closed to device='CPH2421 - 11 - API 30' for app='com.cometchat.sampleapp.reactnative.android' with code='1006' and reason=''.
+ BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (0/1)
+ BUNDLE  ./index.js 
+ INFO  Connection established to app='com.cometchat.sampleapp.reactnative.android' on device='CPH2421 - 11 - API 30'.
+ INFO  Connection closed to device='CPH2421 - 11 - API 30' for app='com.cometchat.sampleapp.reactnative.android' with code='1006' and reason=''.

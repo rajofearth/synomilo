@@ -1,0 +1,100 @@
+{
+  "builderId": "8c0c1c80-b08e-4960-80d4-686396119711",
+  "settings": {
+    "chatFeatures": {
+      "coreMessagingExperience": {
+        "typingIndicator": true,
+        "threadConversationAndReplies": true,
+        "photosSharing": true,
+        "videoSharing": true,
+        "audioSharing": true,
+        "fileSharing": true,
+        "editMessage": true,
+        "deleteMessage": true,
+        "messageDeliveryAndReadReceipts": true,
+        "userAndFriendsPresence": true
+      },
+      "deeperUserEngagement": {
+        "mentions": true,
+        "reactions": true,
+        "messageTranslation": true,
+        "polls": true,
+        "collaborativeWhiteboard": false,
+        "collaborativeDocument": false,
+        "voiceNotes": true,
+        "emojis": true,
+        "stickers": false,
+        "userInfo": true,
+        "groupInfo": true
+      },
+      "aiUserCopilot": {
+        "conversationStarter": true,
+        "conversationSummary": false,
+        "smartReply": true
+      },
+      "groupManagement": {
+        "createGroup": true,
+        "addMembersToGroups": true,
+        "joinLeaveGroup": true,
+        "deleteGroup": true,
+        "viewGroupMembers": true
+      },
+      "moderatorControls": {
+        "kickUsers": true,
+        "banUsers": true,
+        "promoteDemoteMembers": true
+      },
+      "privateMessagingWithinGroups": {
+        "sendPrivateMessageToGroupMembers": true
+      }
+    },
+    "callFeatures": {
+      "voiceAndVideoCalling": {
+        "oneOnOneVoiceCalling": true,
+        "oneOnOneVideoCalling": true,
+        "groupVideoConference": true,
+        "groupVoiceConference": true
+      }
+    },
+    "layout": {
+      "withSideBar": true,
+      "tabs": [
+        "chats",
+        "calls",
+        "users",
+        "groups"
+      ],
+      "chatType": "both"
+    },
+    "style": {
+          "theme": "system",
+          "color": {
+              "brandColor": "#6852D6",
+              "primaryTextLight": "#141414",
+              "primaryTextDark": "#FFFFFF",
+              "secondaryTextLight": "#727272",
+              "secondaryTextDark": "#989898"
+          },
+          "typography": {
+              "font": "roboto",
+              "size": "default"
+          }
+    },
+    "noCode": {
+      "docked": false,
+      "styles": {
+        "buttonBackGround": "#6952d6",
+        "buttonShape": "rounded",
+        "openIcon": "https://nocode-js.cometchat.io/v1/resources/docked_open_icon.svg",
+        "closeIcon": "https://nocode-js.cometchat.io/v1/resources/docked_close_icon.svg",
+        "customJs": "",
+        "customCss": ""
+      }
+    }
+  },
+  "name": "ttttt",
+  "type": "low-code",
+  "createdAt": 1749032525,
+  "updatedAt": 1749032525,
+  "expiresAt": 1812108125
+}

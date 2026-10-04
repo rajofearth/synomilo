@@ -1,0 +1,45 @@
+export const APP_NAME = 'synomiló';
+
+export const AppConstants = {
+  fcmProviderId: '',
+  apnsProviderId: '',
+  authKey: 'ee2fe34b0ca0817cdb650aa4f8b985fb07ed1245',
+  appId: '1683794f9fd14c574',
+  region: 'IN',
+  subscriptionType: 'ALL_USERS',
+  versionNumber: 'V5.5.1',
+  webClientId:
+    '',
+  iosClientId:
+    '',
+};
+
+export const SCREEN_CONSTANTS = {
+  LOGIN: 'Login',
+  SIGN_UP: 'SignUp',
+  APP_CRED: 'AppCredentials',
+  SAMPLE_USER: 'SampleUser',
+  ONGOING_CALL_SCREEN: 'OngoingCallScreen',
+  BOTTOM_TAB_NAVIGATOR: 'BottomTabNavigator',
+  CHATS: 'Chats',
+  CALLS: 'Calls',
+  USERS: 'Users',
+  GROUPS: 'Groups',
+  CONVERSATION: 'Conversation',
+  CREATE_CONVERSATION: 'CreateConversation',
+  MESSAGES: 'Messages',
+  SEARCH_MESSAGES: 'SearchMessages',
+  THREAD_VIEW: 'ThreadView',
+  SAVED_MESSAGES: 'SavedMessages',
+  PINNED_MESSAGES: 'PinnedMessages',
+  USER_INFO: 'UserInfo',
+  GROUP_INFO: 'GroupInfo',
+  ADD_MEMBER: 'AddMember',
+  TRANSFER_OWNERSHIP: 'TransferOwnershipSection',
+  BANNED_MEMBER: 'BannedMember',
+  VIEW_MEMBER: 'ViewMembers',
+  CALL_LOGS: 'CallLogs',
+  CALL_DETAILS: 'CallDetails',
+  QR_SCREEN: 'QRScreen',
+  AI_AGENTS: 'AIAgents',
+} as const;
