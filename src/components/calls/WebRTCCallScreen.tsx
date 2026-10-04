@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useQuery, useMutation } from 'convex/react';
 import {
@@ -359,7 +360,11 @@ const CallScreen = ({ route, navigation }: any) => {
             style={[styles.controlButton, { backgroundColor: '#2A2A3A' }]}
             onPress={toggleMute}
           >
-            <Text style={styles.controlIcon}>{muted ? '🔇' : '🎙️'}</Text>
+            <MaterialDesignIcons
+              name={muted ? 'microphone-off' : 'microphone'}
+              size={26}
+              color="#FFFFFF"
+            />
           </TouchableOpacity>
 
           {type === 'video' && (
@@ -368,15 +373,21 @@ const CallScreen = ({ route, navigation }: any) => {
                 style={[styles.controlButton, { backgroundColor: '#2A2A3A' }]}
                 onPress={toggleCamera}
               >
-                <Text style={styles.controlIcon}>
-                  {cameraOff ? '📷' : '📹'}
-                </Text>
+                <MaterialDesignIcons
+                  name={cameraOff ? 'video-off' : 'video'}
+                  size={26}
+                  color="#FFFFFF"
+                />
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.controlButton, { backgroundColor: '#2A2A3A' }]}
                 onPress={flipCamera}
               >
-                <Text style={styles.controlIcon}>🔄</Text>
+                <MaterialDesignIcons
+                  name="camera-flip-outline"
+                  size={26}
+                  color="#FFFFFF"
+                />
               </TouchableOpacity>
             </>
           )}
@@ -385,7 +396,7 @@ const CallScreen = ({ route, navigation }: any) => {
             style={[styles.controlButton, { backgroundColor: '#E5484D' }]}
             onPress={hangUp}
           >
-            <Text style={styles.controlIcon}>📵</Text>
+            <MaterialDesignIcons name="phone-hangup" size={26} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
@@ -451,7 +462,7 @@ const styles = StyleSheet.create({
     top: 100,
     width: 110,
     height: 160,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#1C1C26',
   },
@@ -471,9 +482,6 @@ const styles = StyleSheet.create({
     borderRadius: 31,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  controlIcon: {
-    fontSize: 24,
   },
   loading: {
     position: 'absolute',

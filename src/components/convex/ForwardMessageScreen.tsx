@@ -115,7 +115,10 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
           <Avatar.Text
             size={44}
             label={initialsFor(item.title)}
-            style={{ backgroundColor: theme.color.extendedPrimary50 }}
+            style={{
+              backgroundColor: theme.color.extendedPrimary50,
+              borderRadius: item.type === 'group' ? 16 : 22,
+            }}
             labelStyle={[styles.avatarLabel, { color: theme.color.primary }]}
           />
           <View style={styles.rowBody}>
@@ -150,7 +153,7 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
       >
         <Appbar.BackAction onPress={() => navigation.goBack()} color={theme.color.textPrimary} />
         <Appbar.Content
-          title="Forward to…"
+          title="Forward to"
           titleStyle={[theme.typography.heading3.bold, { color: theme.color.textPrimary }]}
         />
       </Appbar.Header>
@@ -226,19 +229,19 @@ const styles = StyleSheet.create({
   preview: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 12,
   },
   previewIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   previewBody: { flex: 1, marginLeft: 12 },
-  searchbar: { marginTop: 12, borderRadius: 12 },
+  searchbar: { marginTop: 12, borderRadius: 16 },
   center: {
     flex: 1,
     alignItems: 'center',

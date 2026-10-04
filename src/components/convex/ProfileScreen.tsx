@@ -1,142 +1,285 @@
-import React, { useCallback } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
+import React, { useCallback, useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { useMutation } from 'convex/react';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import {
   Appbar,
   Avatar,
   Button,
+  Dialog,
   Divider,
   List,
+  Portal,
+  Snackbar,
   Text,
+  TextInput,
+  useTheme as usePaperTheme,
 } from 'react-native-paper';
+import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
+import { convexErrorMessage } from '../../utils/convexError';
+
+const initialsFor = (name: string): string =>
+  name
+    .trim()
+    .split(/\s+/)
+    .map(part => part[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase() || '?';
 
 const ProfileScreen = ({ navigation }: any) => {
-  const theme = useTheme();
-  const { user, signOut } = useSession();
+  const { colors } = usePaperTheme();
+  const { user, token, signOut } = useSession();
+  const updateProfile = useMutation(api.users.updateProfile);
+
+  const [editing, setEditing] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState('');
+  const [usernameDraft, setUsernameDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [signOutVisible, setSignOutVisible] = useState(false);
+  const [snackbar, setSnackbar] = useState<string | null>(null);
 
   const displayName = user?.displayName ?? 'Unknown';
   const username = user?.username ?? 'unknown';
-  const initials =
-    displayName
-      .trim()
-      .split(/\s+/)
-      .map(part => part[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join('')
-      .toUpperCase() || '?';
+  const initials = initialsFor(displayName);
 
-  const confirmSignOut = useCallback(() => {
-    Alert.alert('Sign out', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign out',
-        style: 'destructive',
-        onPress: () => {
-          signOut().catch(() => {});
-        },
-      },
-    ]);
+  const openEdit = useCallback(() => {
+    setDisplayNameDraft(displayName);
+    setUsernameDraft(username);
+    setEditing(true);
+  }, [displayName, username]);
+
+  const toggleEdit = useCallback(() => {
+    if (editing) {
+      setEditing(false);
+      return;
+    }
+    openEdit();
+  }, [editing, openEdit]);
+
+  const handleSave = useCallback(async () => {
+    if (!token || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateProfile({
+        token,
+        displayName: displayNameDraft,
+        username: usernameDraft,
+      });
+      setEditing(false);
+      setSnackbar('Profile updated');
+    } catch (error) {
+      setSnackbar(convexErrorMessage(error, 'Could not update the profile'));
+    } finally {
+      setSaving(false);
+    }
+  }, [token, saving, updateProfile, displayNameDraft, usernameDraft]);
+
+  const handleSignOut = useCallback(() => {
+    setSignOutVisible(false);
+    signOut().catch(() => {});
   }, [signOut]);
 
   return (
-    <View
-      style={[styles.container, { backgroundColor: theme.color.background1 }]}
-    >
-      <Appbar.Header style={{ backgroundColor: theme.color.background2 }}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Appbar.Header centered={false} style={{ backgroundColor: colors.surface }}>
         <Appbar.BackAction
           onPress={() => navigation.goBack()}
-          color={theme.color.textPrimary}
+          color={colors.onSurface}
         />
         <Appbar.Content
           title="Profile"
-          titleStyle={{ color: theme.color.textPrimary }}
+          titleStyle={{ color: colors.onSurface }}
+        />
+        <Appbar.Action
+          icon={({ size }) => (
+            <MaterialDesignIcons
+              name="pencil-outline"
+              size={size}
+              color={colors.onSurfaceVariant}
+            />
+          )}
+          onPress={toggleEdit}
         />
       </Appbar.Header>
 
-      <View style={styles.hero}>
-        <Avatar.Text
-          size={96}
-          label={initials}
-          style={{ backgroundColor: theme.color.extendedPrimary50 }}
-          color={theme.color.primary}
-        />
-        <Text
-          variant="headlineMedium"
-          style={[styles.name, { color: theme.color.textPrimary }]}
-        >
-          {displayName}
-        </Text>
-        <Text variant="bodyMedium" style={{ color: theme.color.textSecondary }}>
-          @{username}
-        </Text>
-      </View>
-
-      <List.Section
-        title="Account"
-        titleStyle={{ color: theme.color.textSecondary }}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
       >
-        <List.Item
-          title="Username"
-          titleStyle={{ color: theme.color.textPrimary }}
-          right={({ style }) => (
-            <Text
-              variant="bodyMedium"
-              style={[style, { color: theme.color.textSecondary }]}
-            >
-              @{username}
-            </Text>
-          )}
-        />
-        <Divider style={{ backgroundColor: theme.color.borderDefault }} />
-        <List.Item
-          title="Display name"
-          titleStyle={{ color: theme.color.textPrimary }}
-          right={({ style }) => (
-            <Text
-              variant="bodyMedium"
-              style={[style, { color: theme.color.textSecondary }]}
-            >
-              {displayName}
-            </Text>
-          )}
-        />
-      </List.Section>
+        <View style={styles.hero}>
+          <Avatar.Text
+            size={88}
+            label={initials}
+            style={{ backgroundColor: colors.primaryContainer }}
+            color={colors.onPrimaryContainer}
+          />
+          <Text
+            variant="headlineSmall"
+            style={[styles.name, { color: colors.onSurface }]}
+          >
+            {displayName}
+          </Text>
+          <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
+            @{username}
+          </Text>
+        </View>
 
-      <List.Section
-        title="Settings"
-        titleStyle={{ color: theme.color.textSecondary }}
-      >
-        <List.Item
-          title="Settings"
-          titleStyle={{ color: theme.color.textPrimary }}
-          left={({ style }) => (
-            <MaterialDesignIcons
-              name="cog-outline"
-              size={24}
-              style={style}
-              color={theme.color.textSecondary}
+        {editing ? (
+          <View style={styles.editForm}>
+            <TextInput
+              mode="outlined"
+              label="Display name"
+              value={displayNameDraft}
+              onChangeText={setDisplayNameDraft}
+              style={[styles.input, { backgroundColor: colors.background }]}
+              outlineStyle={styles.inputOutline}
+              outlineColor={colors.outline}
+              activeOutlineColor={colors.primary}
             />
-          )}
-          onPress={() => navigation.navigate('Settings')}
-        />
-      </List.Section>
+            <TextInput
+              mode="outlined"
+              label="Username"
+              value={usernameDraft}
+              onChangeText={setUsernameDraft}
+              autoCapitalize="none"
+              autoCorrect={false}
+              helperText="3-20 characters: a-z, 0-9, _"
+              style={[styles.input, { backgroundColor: colors.background }]}
+              outlineStyle={styles.inputOutline}
+              outlineColor={colors.outline}
+              activeOutlineColor={colors.primary}
+            />
+            <View style={styles.editActions}>
+              <Button
+                mode="text"
+                textColor={colors.onSurfaceVariant}
+                style={styles.actionButton}
+                disabled={saving}
+                onPress={() => setEditing(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                style={styles.actionButton}
+                contentStyle={styles.pillContent}
+                loading={saving}
+                disabled={saving || !token}
+                onPress={handleSave}
+              >
+                Save
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <>
+            <List.Section
+              title="Account"
+              titleStyle={{ color: colors.onSurfaceVariant }}
+            >
+              <List.Item
+                title="Username"
+                titleStyle={{ color: colors.onSurface }}
+                right={() => (
+                  <Text variant="bodyMedium" style={styles.value}>
+                    @{username}
+                  </Text>
+                )}
+              />
+              <Divider style={{ backgroundColor: colors.outlineVariant }} />
+              <List.Item
+                title="Display name"
+                titleStyle={{ color: colors.onSurface }}
+                right={() => (
+                  <Text variant="bodyMedium" style={styles.value}>
+                    {displayName}
+                  </Text>
+                )}
+              />
+            </List.Section>
 
-      <View style={styles.footer}>
-        <Button
-          mode="outlined"
-          textColor="#E5484D"
-          icon={() => (
-            <MaterialDesignIcons name="logout" size={20} color="#E5484D" />
-          )}
-          style={[styles.signOutButton, { borderColor: '#E5484D' }]}
-          onPress={confirmSignOut}
+            <List.Section
+              title="Preferences"
+              titleStyle={{ color: colors.onSurfaceVariant }}
+            >
+              <List.Item
+                title="Settings"
+                titleStyle={{ color: colors.onSurface }}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="cog-outline"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                onPress={() => navigation.navigate('Settings')}
+              />
+            </List.Section>
+
+            <View style={styles.footer}>
+              <Button
+                mode="contained"
+                buttonColor={colors.errorContainer}
+                textColor={colors.onErrorContainer}
+                icon={({ size }) => (
+                  <MaterialDesignIcons
+                    name="logout"
+                    size={size}
+                    color={colors.onErrorContainer}
+                  />
+                )}
+                style={styles.signOutButton}
+                contentStyle={styles.pillContent}
+                onPress={() => setSignOutVisible(true)}
+              >
+                Sign out
+              </Button>
+            </View>
+          </>
+        )}
+      </ScrollView>
+
+      <Portal>
+        <Dialog
+          visible={signOutVisible}
+          onDismiss={() => setSignOutVisible(false)}
+          style={[styles.dialog, { backgroundColor: colors.elevation.level3 }]}
         >
-          Sign out
-        </Button>
-      </View>
+          <Dialog.Title style={{ color: colors.onSurface }}>
+            Sign out
+          </Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
+              Are you sure you want to sign out?
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              textColor={colors.onSurfaceVariant}
+              onPress={() => setSignOutVisible(false)}
+            >
+              Cancel
+            </Button>
+            <Button textColor={colors.error} onPress={handleSignOut}>
+              Sign out
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      <Snackbar
+        visible={snackbar !== null}
+        onDismiss={() => setSnackbar(null)}
+        duration={3000}
+      >
+        {snackbar ?? ''}
+      </Snackbar>
     </View>
   );
 };
@@ -147,20 +290,53 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  content: {
+    flexGrow: 1,
+    paddingBottom: 24,
+  },
   hero: {
     alignItems: 'center',
-    paddingTop: 32,
-    paddingBottom: 24,
+    paddingTop: 24,
+    paddingBottom: 16,
   },
   name: {
     marginTop: 16,
     marginBottom: 4,
+  },
+  value: {
+    alignSelf: 'center',
+  },
+  editForm: {
+    paddingHorizontal: 16,
+  },
+  input: {
+    borderRadius: 16,
+  },
+  inputOutline: {
+    borderRadius: 16,
+  },
+  editActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 8,
+  },
+  actionButton: {
+    borderRadius: 28,
   },
   footer: {
     marginTop: 'auto',
     padding: 16,
   },
   signOutButton: {
-    borderWidth: 1,
+    width: '100%',
+    borderRadius: 28,
+  },
+  pillContent: {
+    paddingVertical: 6,
+  },
+  dialog: {
+    borderRadius: 28,
   },
 });

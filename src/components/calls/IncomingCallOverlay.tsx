@@ -8,6 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
@@ -113,7 +114,7 @@ const IncomingCallOverlay: React.FC = () => {
             onPress={decline}
             disabled={busy}
           >
-            <Text style={styles.actionIcon}>📵</Text>
+            <MaterialDesignIcons name="phone-hangup" size={32} color="#FFFFFF" />
             <Text style={styles.actionLabel}>Decline</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -122,9 +123,9 @@ const IncomingCallOverlay: React.FC = () => {
             disabled={busy}
           >
             {busy ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.actionIcon}>📞</Text>
+              <MaterialDesignIcons name="phone" size={32} color="#FFFFFF" />
             )}
             <Text style={styles.actionLabel}>Accept</Text>
           </TouchableOpacity>
@@ -186,9 +187,6 @@ const styles = StyleSheet.create({
     borderRadius: 48,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  actionIcon: {
-    fontSize: 32,
   },
   actionLabel: {
     color: '#fff',

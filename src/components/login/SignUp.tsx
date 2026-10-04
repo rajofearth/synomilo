@@ -81,7 +81,7 @@ const SignUp: React.FC = () => {
       return;
     }
     if (trimmedName.length < 2) {
-      showToast('Please enter your full name');
+      showToast('Enter your full name');
       return;
     }
     if (!UID_PATTERN.test(trimmedUid)) {
@@ -168,7 +168,7 @@ const SignUp: React.FC = () => {
                 },
               ]}
             >
-              A few details and you're in
+              Enter your details to create an account.
             </Text>
 
             <View style={styles.inputContainer}>
@@ -229,7 +229,7 @@ const SignUp: React.FC = () => {
                   { color: theme.color.textTertiary, marginTop: 5 },
                 ]}
               >
-                3-32 characters. Letters, numbers, dots, dashes, underscores.
+                3-32 characters: letters, numbers, dots, dashes, underscores.
               </Text>
             </View>
 
@@ -342,13 +342,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   input: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
     borderWidth: 1,
   },
   primaryButton: {
-    borderRadius: 8,
+    borderRadius: 24,
     paddingVertical: 12,
     width: '100%',
     marginTop: 24,
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     right: 20,
     backgroundColor: '#C73C3E',
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 16,
     alignItems: 'center',
   },
   toastText: {
