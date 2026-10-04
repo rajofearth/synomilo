@@ -59,7 +59,17 @@ export const sendToTokens = internalAction({
         payload: { aps: { sound: "default" } },
       },
     });
-    return { sent: response.successCount };
+    const failures = response.responses
+      .map((entry: any, index: number) =>
+        entry.success
+          ? null
+          : `${tokens[index].slice(0, 14)}: ${entry.error?.code ?? "unknown"}`,
+      )
+      .filter(Boolean);
+    if (failures.length > 0) {
+      console.error("push failures", failures);
+    }
+    return { sent: response.successCount, failed: failures.length };
   },
 });
 
