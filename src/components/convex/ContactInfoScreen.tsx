@@ -126,7 +126,7 @@ const ContactInfoScreen = ({ route, navigation }: any) => {
 
           <Text style={[theme.typography.caption1.medium, { color: c.textTertiary, marginHorizontal: 16, marginTop: 8 }]}>Info</Text>
 
-          {renderInfoRow('account-outline', 'Username', otherMember?.username ? `@${otherMember.username}` : '—')}
+          {renderInfoRow('account-outline', 'Username', otherMember?.username ? `@${otherMember.username}` : 'Not set')}
           {renderInfoRow('message-text-outline', 'Type', 'Direct message')}
         </ScrollView>
       )}

@@ -10,7 +10,7 @@ const SettingsScreen = ({ navigation }: any) => {
   const { signOut } = useSession();
 
   const confirmSignOut = useCallback(() => {
-    Alert.alert('Sign out', 'Are you sure?', [
+    Alert.alert('Sign out', 'This will sign you out on this device.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign out',
@@ -47,7 +47,7 @@ const SettingsScreen = ({ navigation }: any) => {
       >
         <List.Item
           title="App notification settings"
-          description="Open the system settings for synomiló"
+          description="Open system settings for synomiló"
           titleStyle={{ color: theme.color.textPrimary }}
           descriptionStyle={{ color: theme.color.textSecondary }}
           left={({ style }) => (

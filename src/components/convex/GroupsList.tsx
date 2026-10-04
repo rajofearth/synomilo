@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
+import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
@@ -32,6 +33,14 @@ type UserRow = {
   username: string;
   displayName: string;
 };
+
+const initialsFor = (name: string): string =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase() ?? '')
+    .join('');
 
 const GroupsList = ({ navigation }: any) => {
   const theme = useTheme();
@@ -73,7 +82,7 @@ const GroupsList = ({ navigation }: any) => {
     }
     const name = groupName.trim();
     if (name.length < 2) {
-      Alert.alert('Name needed', 'Please give the wedding group a name.');
+      Alert.alert('Name needed', 'Enter a group name.');
       return;
     }
     setCreating(true);
@@ -107,7 +116,7 @@ const GroupsList = ({ navigation }: any) => {
             { color: theme.color.textPrimary },
           ]}
         >
-          Wedding Groups
+          Groups
         </Text>
         <TouchableOpacity
           style={[
@@ -116,7 +125,7 @@ const GroupsList = ({ navigation }: any) => {
           ]}
           onPress={() => setCreateOpen(true)}
         >
-          <Text style={styles.addButtonText}>+</Text>
+          <MaterialDesignIcons name="plus" size={24} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
@@ -132,7 +141,7 @@ const GroupsList = ({ navigation }: any) => {
               { color: theme.color.textPrimary },
             ]}
           >
-            No wedding groups yet
+            No groups yet
           </Text>
           <Text
             style={[
@@ -141,7 +150,7 @@ const GroupsList = ({ navigation }: any) => {
               { color: theme.color.textSecondary },
             ]}
           >
-            Create a group for your wedding party, family or guests.
+            Create a group for your wedding party, family, or guests.
           </Text>
           <TouchableOpacity
             style={[
@@ -159,7 +168,10 @@ const GroupsList = ({ navigation }: any) => {
           keyExtractor={item => item._id}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.row}
+              style={({ pressed }) => [
+                styles.row,
+                pressed && { backgroundColor: theme.color.background3 },
+              ]}
               onPress={() =>
                 navigation.navigate('Messages', {
                   conversationId: item._id,
@@ -173,7 +185,14 @@ const GroupsList = ({ navigation }: any) => {
                   { backgroundColor: theme.color.extendedPrimary50 },
                 ]}
               >
-                <Text style={styles.groupEmoji}>{item.emoji ?? '💍'}</Text>
+                <Text
+                  style={[
+                    styles.groupInitials,
+                    { color: theme.color.primary },
+                  ]}
+                >
+                  {initialsFor(item.title)}
+                </Text>
               </View>
               <View style={styles.rowBody}>
                 <Text
@@ -221,7 +240,7 @@ const GroupsList = ({ navigation }: any) => {
                 { color: theme.color.textPrimary, marginBottom: 12 },
               ]}
             >
-              New wedding group
+              New group
             </Text>
             <TextInput
               style={[
@@ -233,7 +252,7 @@ const GroupsList = ({ navigation }: any) => {
               ]}
               value={groupName}
               onChangeText={setGroupName}
-              placeholder="Group name (e.g. Sharma Wedding)"
+              placeholder="Group name"
               placeholderTextColor={theme.color.textTertiary}
             />
             <Text
@@ -268,7 +287,13 @@ const GroupsList = ({ navigation }: any) => {
                         },
                       ]}
                     >
-                      {selected && <Text style={styles.checkmark}>✓</Text>}
+                      {selected && (
+                        <MaterialDesignIcons
+                          name="check"
+                          size={14}
+                          color="#FFFFFF"
+                        />
+                      )}
                     </View>
                     <Text
                       style={[
@@ -334,11 +359,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addButtonText: {
-    color: '#fff',
-    fontSize: 24,
-    lineHeight: 28,
-  },
   center: {
     flex: 1,
     alignItems: 'center',
@@ -351,7 +371,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   ctaButton: {
-    borderRadius: 8,
+    borderRadius: 20,
     paddingVertical: 12,
     paddingHorizontal: 24,
     alignItems: 'center',
@@ -364,18 +384,21 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginHorizontal: 8,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
   groupAvatar: {
     width: 52,
     height: 52,
-    borderRadius: 26,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  groupEmoji: {
-    fontSize: 24,
+  groupInitials: {
+    fontSize: 18,
+    fontWeight: '700',
   },
   rowBody: {
     flex: 1,
@@ -387,15 +410,15 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   createSheet: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 32,
     maxHeight: '85%',
   },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -410,15 +433,10 @@ const styles = StyleSheet.create({
   checkbox: {
     width: 22,
     height: 22,
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-  },
-  checkmark: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
   },
 });

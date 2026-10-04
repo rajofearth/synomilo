@@ -129,7 +129,7 @@ const Login: React.FC = () => {
                 { color: theme.color.textPrimary, alignSelf: 'center' },
               ]}
             >
-              Welcome back
+              Log in
             </Text>
             <Text
               style={[
@@ -142,7 +142,7 @@ const Login: React.FC = () => {
                 },
               ]}
             >
-              Log in to continue
+              Enter your username and password.
             </Text>
 
             <View style={styles.inputContainer}>
@@ -283,13 +283,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   input: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
     borderWidth: 1,
   },
   primaryButton: {
-    borderRadius: 8,
+    borderRadius: 24,
     paddingVertical: 12,
     width: '100%',
     marginTop: 24,
@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
     right: 20,
     backgroundColor: '#C73C3E',
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 16,
     alignItems: 'center',
   },
   toastText: {

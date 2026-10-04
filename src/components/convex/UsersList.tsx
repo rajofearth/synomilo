@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
+import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
@@ -101,6 +102,11 @@ const UsersList = ({ navigation }: any) => {
           { backgroundColor: theme.color.background3 },
         ]}
       >
+        <MaterialDesignIcons
+          name="magnify"
+          size={20}
+          color={theme.color.textTertiary}
+        />
         <TextInput
           style={[styles.search, { color: theme.color.textPrimary }]}
           value={query}
@@ -120,7 +126,10 @@ const UsersList = ({ navigation }: any) => {
           keyExtractor={item => item._id}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.row}
+              style={({ pressed }) => [
+                styles.row,
+                pressed && { backgroundColor: theme.color.background3 },
+              ]}
               onPress={() => openChat(item)}
               disabled={!!openingId}
             >
@@ -163,14 +172,23 @@ const UsersList = ({ navigation }: any) => {
             <View style={styles.center}>
               <Text
                 style={[
-                  theme.typography.body.medium,
-                  { color: theme.color.textSecondary },
+                  theme.typography.heading3.bold,
+                  { color: theme.color.textPrimary },
                 ]}
               >
-                {query
-                  ? 'No users match your search.'
-                  : 'No other users yet. Invite someone to join synomiló.'}
+                {query ? 'No users found' : 'No other users yet'}
               </Text>
+              {!query && (
+                <Text
+                  style={[
+                    theme.typography.body.medium,
+                    styles.emptyHint,
+                    { color: theme.color.textSecondary },
+                  ]}
+                >
+                  Invite someone to join synomiló.
+                </Text>
+              )}
             </View>
           }
         />
@@ -190,13 +208,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginHorizontal: 16,
-    borderRadius: 24,
+    borderRadius: 20,
     paddingHorizontal: 16,
     marginBottom: 8,
   },
   search: {
+    flex: 1,
     paddingVertical: 10,
+    marginLeft: 8,
   },
   center: {
     flex: 1,
@@ -207,8 +229,14 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginHorizontal: 8,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  emptyHint: {
+    textAlign: 'center',
+    marginTop: 8,
   },
   avatar: {
     width: 48,

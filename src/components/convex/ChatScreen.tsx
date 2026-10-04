@@ -14,6 +14,8 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Animated,
+  Dimensions,
   Image,
   Linking,
   Modal,
@@ -23,6 +25,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { useTheme as usePaperTheme } from 'react-native-paper';
 import { useQuery, useMutation } from 'convex/react';
 import dayjs from 'dayjs';
 import Clipboard from '@react-native-clipboard/clipboard';
@@ -118,8 +121,84 @@ const uriToBlob = (uri: string): Promise<Blob> =>
     xhr.send();
   });
 
+type MenuActionProps = {
+  icon: React.ComponentProps<typeof MaterialDesignIcons>['name'];
+  label: string;
+  color?: string;
+  onPress: () => void;
+};
+
+const MenuAction = ({ icon, label, color, onPress }: MenuActionProps) => {
+  const paper = usePaperTheme();
+  return (
+    <TouchableOpacity
+      style={styles.menuAction}
+      activeOpacity={0.7}
+      onPress={onPress}
+    >
+      <MaterialDesignIcons
+        name={icon}
+        size={20}
+        color={color ?? paper.colors.onSurfaceVariant}
+      />
+      <Text
+        style={[styles.menuActionLabel, { color: color ?? paper.colors.onSurface }]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
+type ReactionPickerButtonProps = {
+  emoji: string;
+  onPress: () => void;
+};
+
+const ReactionPickerButton = ({
+  emoji,
+  onPress,
+}: ReactionPickerButtonProps) => {
+  const paper = usePaperTheme();
+  const scale = useRef(new Animated.Value(1)).current;
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        style={[
+          styles.reactionPickerItem,
+          { backgroundColor: paper.colors.surfaceVariant },
+        ]}
+        activeOpacity={0.75}
+        onPressIn={() => {
+          Animated.spring(scale, {
+            toValue: 1.22,
+            stiffness: 420,
+            damping: 16,
+            mass: 0.6,
+            useNativeDriver: true,
+          }).start();
+        }}
+        onPressOut={() => {
+          Animated.spring(scale, {
+            toValue: 1,
+            stiffness: 360,
+            damping: 20,
+            mass: 0.7,
+            useNativeDriver: true,
+          }).start();
+        }}
+        onPress={onPress}
+      >
+        <Text style={styles.reactionPickerEmoji}>{emoji}</Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
 const ChatScreen = ({ route, navigation }: any) => {
   const theme = useTheme();
+  const paperTheme = usePaperTheme();
+  const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
   const { token, user } = useSession();
   const conversationId = route.params?.conversationId as string;
   const fallbackTitle = (route.params?.title as string) ?? 'Chat';
@@ -159,8 +238,16 @@ const ChatScreen = ({ route, navigation }: any) => {
   const [sending, setSending] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [actionTarget, setActionTarget] = useState<Message | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [actionPanel, setActionPanel] = useState<'delete' | 'info' | null>(
+    null,
+  );
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const menuScale = useRef(new Animated.Value(0.8)).current;
+  const menuOpacity = useRef(new Animated.Value(0)).current;
   const listRef = useRef<FlatList<Message>>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -184,6 +271,47 @@ const ChatScreen = ({ route, navigation }: any) => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!actionTarget) {
+      return;
+    }
+    menuScale.setValue(0.8);
+    menuOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(menuOpacity, {
+        toValue: 1,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+      Animated.spring(menuScale, {
+        toValue: 1,
+        stiffness: 380,
+        damping: 26,
+        mass: 0.9,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [actionTarget, actionPanel, menuScale, menuOpacity]);
+
+  const closeActionMenu = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(menuOpacity, {
+        toValue: 0,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.timing(menuScale, {
+        toValue: 0.92,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setActionTarget(null);
+      setMenuAnchor(null);
+      setActionPanel(null);
+    });
+  }, [menuOpacity, menuScale]);
 
   const onTextChange = useCallback(
     (value: string) => {
@@ -358,7 +486,6 @@ const ChatScreen = ({ route, navigation }: any) => {
 
   const applyReaction = useCallback(
     async (message: Message, emoji: string) => {
-      setActionTarget(null);
       if (!token) {
         return;
       }
@@ -381,40 +508,70 @@ const ChatScreen = ({ route, navigation }: any) => {
     }
   }, []);
 
-  const forwardMessageAction = useCallback(
-    (message: Message) => {
-      setActionTarget(null);
-      navigation.navigate('ForwardMessage', { message });
-    },
-    [navigation],
-  );
-
-  const deleteMessage = useCallback(
-    (message: Message) => {
-      setActionTarget(null);
-      if (!token) {
+  const reactFromMenu = useCallback(
+    (emoji: string) => {
+      if (!actionTarget) {
         return;
       }
-      Alert.alert('Delete message?', 'This will delete the message for everyone.', [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            removeMessage({ token, messageId: message._id as any }).catch(
-              error => {
-                Alert.alert(
-                  'Could not delete',
-                  convexErrorMessage(error, 'Try again.'),
-                );
-              },
-            );
-          },
-        },
-      ]);
+      const target = actionTarget;
+      closeActionMenu();
+      applyReaction(target, emoji);
     },
-    [token, removeMessage],
+    [actionTarget, closeActionMenu, applyReaction],
   );
+
+  const replyFromMenu = useCallback(() => {
+    if (!actionTarget) {
+      return;
+    }
+    setReplyTarget(actionTarget);
+    closeActionMenu();
+  }, [actionTarget, closeActionMenu]);
+
+  const copyFromMenu = useCallback(() => {
+    if (!actionTarget) {
+      return;
+    }
+    copyMessage(actionTarget);
+    closeActionMenu();
+  }, [actionTarget, copyMessage, closeActionMenu]);
+
+  const forwardMessageAction = useCallback(
+    (message: Message) => {
+      closeActionMenu();
+      navigation.navigate('ForwardMessage', { message });
+    },
+    [navigation, closeActionMenu],
+  );
+
+  const showMessageInfo = useCallback(() => {
+    if (!actionTarget) {
+      return;
+    }
+    setActionPanel('info');
+  }, [actionTarget]);
+
+  const requestDelete = useCallback(() => {
+    if (!actionTarget || actionTarget.senderId !== user?._id) {
+      return;
+    }
+    setActionPanel('delete');
+  }, [actionTarget, user?._id]);
+
+  const cancelPanel = useCallback(() => {
+    setActionPanel(null);
+  }, []);
+
+  const confirmDeleteMessage = useCallback(() => {
+    if (!actionTarget || !token) {
+      return;
+    }
+    const messageId = actionTarget._id;
+    closeActionMenu();
+    removeMessage({ token, messageId: messageId as any }).catch(error => {
+      Alert.alert('Could not delete', convexErrorMessage(error, 'Try again.'));
+    });
+  }, [actionTarget, token, removeMessage, closeActionMenu]);
 
   const scrollToMessage = useCallback(
     (messageId: string) => {
@@ -510,7 +667,14 @@ const ChatScreen = ({ route, navigation }: any) => {
             ]}
           >
             <Pressable
-              onLongPress={() => !deleted && setActionTarget(item)}
+              onLongPress={e => {
+                if (deleted) {
+                  return;
+                }
+                const { pageX, pageY } = e.nativeEvent;
+                setMenuAnchor({ x: pageX, y: pageY });
+                setActionTarget(item);
+              }}
               delayLongPress={280}
               style={[
                 styles.bubble,
@@ -732,6 +896,31 @@ const ChatScreen = ({ route, navigation }: any) => {
   );
 
   const isSubscribed = thread !== undefined;
+  const actionCount = actionTarget
+    ? 3 +
+      (actionTarget.kind === 'text' ? 1 : 0) +
+      (actionTarget.senderId === user?._id ? 1 : 0)
+    : 0;
+  const estimatedMenuHeight = 56 + actionCount * 56;
+  const menuLeft = menuAnchor
+    ? Math.min(Math.max(menuAnchor.x - 12, 12), screenWidth - 242)
+    : 12;
+  const menuTop = menuAnchor
+    ? Math.max(
+        12,
+        Math.min(
+          menuAnchor.y > screenHeight * 0.55
+            ? menuAnchor.y - estimatedMenuHeight - 8
+            : menuAnchor.y + 8,
+          screenHeight - estimatedMenuHeight - 12,
+        ),
+      )
+    : 12;
+  const confirmWidth = Math.min(300, screenWidth - 48);
+  const confirmLeft = (screenWidth - confirmWidth) / 2;
+  const confirmTop = menuAnchor
+    ? Math.max(48, Math.min(menuAnchor.y - 110, screenHeight - 280))
+    : screenHeight / 2 - 110;
 
   return (
     <SafeAreaView
@@ -825,6 +1014,7 @@ const ChatScreen = ({ route, navigation }: any) => {
           ref={listRef}
           data={messages}
           inverted
+          keyboardShouldPersistTaps="handled"
           keyExtractor={item => item._id}
           renderItem={renderMessage}
           contentContainerStyle={styles.listContent}
@@ -845,7 +1035,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                   { color: theme.color.textSecondary },
                 ]}
               >
-                No messages yet. Say hi 👋
+                No messages yet
               </Text>
             </View>
           }
@@ -1020,163 +1210,186 @@ const ChatScreen = ({ route, navigation }: any) => {
         </Pressable>
       </Modal>
 
-      <Modal
-        visible={!!actionTarget}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setActionTarget(null)}
-      >
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setActionTarget(null)}
-        >
-          <View
-            style={[
-              styles.attachSheet,
-              { backgroundColor: theme.color.background1 },
-            ]}
-          >
-            <View style={styles.actionEmojiRow}>
-              {REACTION_EMOJIS.map(emoji => (
-                <TouchableOpacity
-                  key={emoji}
-                  style={styles.reactionPickerItem}
-                  onPress={() =>
-                    actionTarget && applyReaction(actionTarget, emoji)
-                  }
-                >
-                  <Text style={styles.reactionPickerEmoji}>{emoji}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View
+      {actionTarget && (
+        <View style={styles.actionOverlay} pointerEvents="box-none">
+          <Pressable style={styles.actionBackdrop} onPress={closeActionMenu} />
+          {actionPanel === 'delete' ? (
+            <Animated.View
               style={[
-                styles.sheetDivider,
-                { backgroundColor: theme.color.borderDefault },
+                styles.confirmCard,
+                {
+                  left: confirmLeft,
+                  top: confirmTop,
+                  width: confirmWidth,
+                  backgroundColor: paperTheme.colors.elevation.level3,
+                  borderColor: paperTheme.colors.outlineVariant,
+                  opacity: menuOpacity,
+                  transform: [{ scale: menuScale }],
+                },
               ]}
-            />
-            <TouchableOpacity
-              style={styles.attachOption}
-              onPress={() => {
-                if (actionTarget) {
-                  setReplyTarget(actionTarget);
-                }
-                setActionTarget(null);
-              }}
             >
-              <MaterialDesignIcons
-                name="reply"
-                size={22}
-                color={theme.color.textPrimary}
-                style={styles.attachOptionIcon}
-              />
               <Text
                 style={[
-                  theme.typography.body.medium,
-                  { color: theme.color.textPrimary },
+                  styles.confirmTitle,
+                  { color: paperTheme.colors.onSurface },
                 ]}
               >
-                Reply
+                Delete message?
               </Text>
-            </TouchableOpacity>
-            {actionTarget?.kind === 'text' && (
-              <TouchableOpacity
-                style={styles.attachOption}
-                onPress={() => {
-                  if (actionTarget) {
-                    copyMessage(actionTarget);
-                  }
-                  setActionTarget(null);
-                }}
+              <Text
+                style={[
+                  styles.confirmBody,
+                  { color: paperTheme.colors.onSurfaceVariant },
+                ]}
               >
-                <MaterialDesignIcons
-                  name="content-copy"
-                  size={22}
-                  color={theme.color.textPrimary}
-                  style={styles.attachOptionIcon}
-                />
-                <Text
+                This will delete the message for everyone.
+              </Text>
+              <View style={styles.confirmActions}>
+                <TouchableOpacity
                   style={[
-                    theme.typography.body.medium,
-                    { color: theme.color.textPrimary },
+                    styles.confirmPill,
+                    { backgroundColor: paperTheme.colors.surfaceVariant },
                   ]}
+                  onPress={cancelPanel}
                 >
-                  Copy
-                </Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={styles.attachOption}
-              onPress={() => actionTarget && forwardMessageAction(actionTarget)}
-            >
-              <MaterialDesignIcons
-                name="share-variant"
-                size={22}
-                color={theme.color.textPrimary}
-                style={styles.attachOptionIcon}
-              />
-              <Text
-                style={[
-                  theme.typography.body.medium,
-                  { color: theme.color.textPrimary },
-                ]}
-              >
-                Forward
-              </Text>
-            </TouchableOpacity>
-            {actionTarget?.senderId === user?._id && (
-              <TouchableOpacity
-                style={styles.attachOption}
-                onPress={() => actionTarget && deleteMessage(actionTarget)}
-              >
-                <MaterialDesignIcons
-                  name="delete-outline"
-                  size={22}
-                  color="#E5484D"
-                  style={styles.attachOptionIcon}
-                />
-                <Text
+                  <Text
+                    style={[
+                      styles.confirmPillLabel,
+                      { color: paperTheme.colors.onSurfaceVariant },
+                    ]}
+                  >
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[
-                    theme.typography.body.medium,
-                    { color: '#E5484D' },
+                    styles.confirmPill,
+                    { backgroundColor: paperTheme.colors.errorContainer },
                   ]}
+                  onPress={confirmDeleteMessage}
                 >
-                  Delete
-                </Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={styles.attachOption}
-              onPress={() => {
-                if (actionTarget) {
-                  Alert.alert(
-                    'Message info',
-                    `${actionTarget.sender.displayName}\n${dayjs(
-                      actionTarget.createdAt,
-                    ).format('MMMM D, YYYY h:mm A')}`,
-                  );
-                }
-                setActionTarget(null);
-              }}
+                  <Text
+                    style={[
+                      styles.confirmPillLabel,
+                      { color: paperTheme.colors.onErrorContainer },
+                    ]}
+                  >
+                    Delete
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          ) : actionPanel === 'info' ? (
+            <Animated.View
+              style={[
+                styles.confirmCard,
+                {
+                  left: confirmLeft,
+                  top: confirmTop,
+                  width: confirmWidth,
+                  backgroundColor: paperTheme.colors.elevation.level3,
+                  borderColor: paperTheme.colors.outlineVariant,
+                  opacity: menuOpacity,
+                  transform: [{ scale: menuScale }],
+                },
+              ]}
             >
-              <MaterialDesignIcons
-                name="information-outline"
-                size={22}
-                color={theme.color.textPrimary}
-                style={styles.attachOptionIcon}
-              />
               <Text
                 style={[
-                  theme.typography.body.medium,
-                  { color: theme.color.textPrimary },
+                  styles.confirmTitle,
+                  { color: paperTheme.colors.onSurface },
                 ]}
               >
-                Info
+                Message info
               </Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
+              <Text
+                style={[
+                  styles.confirmBody,
+                  { color: paperTheme.colors.onSurfaceVariant },
+                ]}
+              >
+                {actionTarget.sender.displayName}
+                {'\n'}
+                {dayjs(actionTarget.createdAt).format('MMMM D, YYYY h:mm A')}
+              </Text>
+              <View style={styles.confirmActions}>
+                <TouchableOpacity
+                  style={[
+                    styles.confirmPill,
+                    { backgroundColor: paperTheme.colors.primaryContainer },
+                  ]}
+                  onPress={cancelPanel}
+                >
+                  <Text
+                    style={[
+                      styles.confirmPillLabel,
+                      { color: paperTheme.colors.onPrimaryContainer },
+                    ]}
+                  >
+                    Close
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          ) : (
+            <Animated.View
+              style={[
+                styles.actionMenu,
+                {
+                  left: menuLeft,
+                  top: menuTop,
+                  backgroundColor: paperTheme.colors.elevation.level3,
+                  borderColor: paperTheme.colors.outlineVariant,
+                  opacity: menuOpacity,
+                  transform: [{ scale: menuScale }],
+                },
+              ]}
+            >
+              <View style={styles.actionEmojiRow}>
+                {REACTION_EMOJIS.map(emoji => (
+                  <ReactionPickerButton
+                    key={emoji}
+                    emoji={emoji}
+                    onPress={() => reactFromMenu(emoji)}
+                  />
+                ))}
+              </View>
+              <View
+                style={[
+                  styles.sheetDivider,
+                  { backgroundColor: paperTheme.colors.outlineVariant },
+                ]}
+              />
+              <MenuAction icon="reply" label="Reply" onPress={replyFromMenu} />
+              {actionTarget.kind === 'text' && (
+                <MenuAction
+                  icon="content-copy"
+                  label="Copy"
+                  onPress={copyFromMenu}
+                />
+              )}
+              <MenuAction
+                icon="share-variant"
+                label="Forward"
+                onPress={() => forwardMessageAction(actionTarget)}
+              />
+              <MenuAction
+                icon="information-outline"
+                label="Info"
+                onPress={showMessageInfo}
+              />
+              {actionTarget.senderId === user?._id && (
+                <MenuAction
+                  icon="delete-outline"
+                  label="Delete"
+                  color={paperTheme.colors.error}
+                  onPress={requestDelete}
+                />
+              )}
+            </Animated.View>
+          )}
+        </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -1186,6 +1399,7 @@ export default ChatScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    position: 'relative',
   },
   header: {
     flexDirection: 'row',
@@ -1395,20 +1609,91 @@ const styles = StyleSheet.create({
   attachOptionIcon: {
     marginRight: 14,
   },
+  actionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+  },
+  actionBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+  },
+  actionMenu: {
+    position: 'absolute',
+    width: 230,
+    borderRadius: 26,
+    borderWidth: 1,
+    paddingVertical: 8,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
   actionEmojiRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   sheetDivider: {
     height: StyleSheet.hairlineWidth,
+    marginHorizontal: 12,
     marginBottom: 4,
   },
   reactionPickerItem: {
-    padding: 6,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reactionPickerEmoji: {
-    fontSize: 26,
+    fontSize: 17,
+  },
+  menuAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  menuActionLabel: {
+    fontSize: 15,
+    marginLeft: 12,
+  },
+  confirmCard: {
+    position: 'absolute',
+    borderRadius: 28,
+    borderWidth: 1,
+    padding: 20,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  confirmTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  confirmBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 18,
+  },
+  confirmPill: {
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    marginLeft: 8,
+  },
+  confirmPillLabel: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

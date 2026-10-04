@@ -151,8 +151,7 @@ const ConversationsList = ({ navigation }: any) => {
               { color: theme.color.textSecondary },
             ]}
           >
-            Start a chat from the Users tab, or create a wedding group from the
-            Groups tab.
+            Start a chat from the Users tab, or create a group.
           </Text>
         </View>
       ) : (
@@ -163,28 +162,28 @@ const ConversationsList = ({ navigation }: any) => {
           refreshing={false}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.row}
+              style={({ pressed }) => [
+                styles.row,
+                pressed && { backgroundColor: theme.color.background3 },
+              ]}
               onPress={() => openChat(item)}
               onLongPress={() => confirmLeave(item)}
             >
               <View
                 style={[
                   styles.rowAvatar,
+                  item.type === 'group' && styles.rowAvatarGroup,
                   { backgroundColor: theme.color.extendedPrimary50 },
                 ]}
               >
-                {item.type === 'group' ? (
-                  <Text style={styles.rowAvatarEmoji}>{item.emoji ?? '💍'}</Text>
-                ) : (
-                  <Text
-                    style={[
-                      styles.rowAvatarInitials,
-                      { color: theme.color.primary },
-                    ]}
-                  >
-                    {initialsFor(item.title)}
-                  </Text>
-                )}
+                <Text
+                  style={[
+                    styles.rowAvatarInitials,
+                    { color: theme.color.primary },
+                  ]}
+                >
+                  {initialsFor(item.title)}
+                </Text>
               </View>
               <View style={styles.rowBody}>
                 <View style={styles.rowTop}>
@@ -313,6 +312,8 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginHorizontal: 8,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
@@ -323,8 +324,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowAvatarEmoji: {
-    fontSize: 24,
+  rowAvatarGroup: {
+    borderRadius: 16,
   },
   rowAvatarInitials: {
     fontSize: 18,

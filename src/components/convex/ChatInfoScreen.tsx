@@ -110,7 +110,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
 
   const quickActions = [
     { icon: muted ? 'bell-outline' : 'bell-off-outline', label: muted ? 'Unmute' : 'Mute', onPress: toggleMute },
-    { icon: 'magnify', label: 'Search', onPress: () => Alert.alert('Coming soon', 'Search is coming soon.') },
+    { icon: 'magnify', label: 'Search', onPress: () => Alert.alert('Search', 'Search is not available yet.') },
     { icon: 'image-multiple-outline', label: 'Media', onPress: () => setTab('photos') },
   ];
 
@@ -158,13 +158,15 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
-            {isGroup && conversation.emoji ? (
-              <View style={[styles.heroEmoji, { backgroundColor: c.extendedPrimary50 }]}>
-                <Text style={styles.heroEmojiText}>{conversation.emoji}</Text>
-              </View>
-            ) : (
-              <Avatar.Text size={80} label={initialsFor(title).toUpperCase()} color={c.textPrimary} style={{ backgroundColor: c.extendedPrimary50 }} />
-            )}
+            <Avatar.Text
+              size={80}
+              label={initialsFor(title).toUpperCase()}
+              color={c.textPrimary}
+              style={{
+                backgroundColor: c.extendedPrimary50,
+                borderRadius: isGroup ? 24 : 40,
+              }}
+            />
             <Text style={[theme.typography.heading3.bold, { color: c.textPrimary, marginTop: 12 }]}>{title}</Text>
             <Text style={[theme.typography.body.medium, { color: c.textSecondary }]}>
               {isGroup ? `${members.length} ${members.length === 1 ? 'member' : 'members'}` : 'Direct message'}
@@ -244,15 +246,13 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { paddingBottom: 40 },
   hero: { alignItems: 'center', paddingTop: 24, paddingBottom: 20, paddingHorizontal: 16 },
-  heroEmoji: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center' },
-  heroEmojiText: { fontSize: 38 },
   quickRow: { flexDirection: 'row', justifyContent: 'space-evenly', paddingHorizontal: 12, marginBottom: 20 },
   quickAction: { alignItems: 'center', minWidth: 72 },
   quickActionIcon: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
   segments: { marginHorizontal: 16, marginBottom: 8 },
   emptyWrap: { alignItems: 'center', paddingVertical: 48 },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 4 },
-  photo: { margin: 4, borderRadius: 6 },
+  photo: { margin: 4, borderRadius: 12 },
   playOverlay: { ...StyleSheet.absoluteFillObject, margin: 4, alignItems: 'center', justifyContent: 'center' },
   row: { paddingVertical: 4 },
   rowIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
