@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { Alert, Linking, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, AppState, Linking, NativeModules, StyleSheet, View } from 'react-native';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { Appbar, Divider, List } from 'react-native-paper';
@@ -9,6 +9,27 @@ import { useSession } from '../../auth/SessionProvider';
 const SettingsScreen = ({ navigation }: any) => {
   const theme = useTheme();
   const { signOut } = useSession();
+  const [batteryAllowed, setBatteryAllowed] = useState<boolean | null>(null);
+
+  const refreshBatteryState = useCallback(() => {
+    NativeModules.Installer?.isIgnoringBatteryOptimizations?.()
+      ?.then((allowed: boolean) => setBatteryAllowed(allowed))
+      ?.catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshBatteryState();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        refreshBatteryState();
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshBatteryState]);
+
+  const openBatterySettings = useCallback(() => {
+    NativeModules.Installer?.openBatterySettings?.();
+  }, []);
 
   const confirmSignOut = useCallback(() => {
     Alert.alert('Sign out', 'This will sign you out on this device.', [
@@ -60,6 +81,35 @@ const SettingsScreen = ({ navigation }: any) => {
             />
           )}
           onPress={openSystemSettings}
+        />
+      </List.Section>
+
+      <Divider style={{ backgroundColor: theme.color.borderDefault }} />
+
+      <List.Section
+        title="Calls"
+        titleStyle={{ color: theme.color.textSecondary }}
+      >
+        <List.Item
+          title="Battery optimization"
+          description={
+            batteryAllowed === null
+              ? 'Checking...'
+              : batteryAllowed
+                ? 'Allowed'
+                : 'Restricted, calls may be delayed'
+          }
+          titleStyle={{ color: theme.color.textPrimary }}
+          descriptionStyle={{ color: theme.color.textSecondary }}
+          left={({ style }) => (
+            <MaterialDesignIcons
+              name="battery-heart-outline"
+              size={24}
+              style={style}
+              color={theme.color.textSecondary}
+            />
+          )}
+          onPress={batteryAllowed === false ? openBatterySettings : undefined}
         />
       </List.Section>
 

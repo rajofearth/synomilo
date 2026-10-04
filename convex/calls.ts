@@ -82,15 +82,18 @@ export const start = mutation({
     );
 
     if (callee.pushToken) {
-      await ctx.scheduler.runAfter(0, internal.push.sendDataToTokens, {
+      await ctx.scheduler.runAfter(0, internal.push.sendToTokens, {
         tokens: [callee.pushToken],
+        title: me.displayName,
+        body: type === "video" ? "Incoming video call" : "Incoming voice call",
+        tag: `call:${callId}`,
+        channelId: "incoming_call_v2",
         data: {
           type: "call",
           callId: String(callId),
           callType: type,
           callerName: me.displayName,
         },
-        ttlMs: RING_TIMEOUT_MS,
       });
     }
 
