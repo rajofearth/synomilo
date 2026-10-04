@@ -1,7 +1,8 @@
 import React, { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, View } from 'react-native';
 import { useMutation } from 'convex/react';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
+import DeviceInfo from 'react-native-device-info';
 import {
   Appbar,
   Avatar,
@@ -44,6 +45,14 @@ const ProfileScreen = ({ navigation }: any) => {
   const displayName = user?.displayName ?? 'Unknown';
   const username = user?.username ?? 'unknown';
   const initials = initialsFor(displayName);
+  const versionLabel = `${DeviceInfo.getVersion()} (${DeviceInfo.getBuildNumber()})`;
+  const platformLabel = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
+
+  const openLink = useCallback((url: string) => {
+    Linking.openURL(url).catch(() => {
+      setSnackbar('Could not open the link');
+    });
+  }, []);
 
   const openEdit = useCallback(() => {
     setDisplayNameDraft(displayName);
@@ -204,6 +213,148 @@ const ProfileScreen = ({ navigation }: any) => {
             </List.Section>
 
             <List.Section
+              title="About"
+              titleStyle={{ color: colors.onSurfaceVariant }}
+            >
+              <List.Item
+                title="Version"
+                titleStyle={{ color: colors.onSurface }}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="information-outline"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                right={() => (
+                  <Text variant="bodyMedium" style={styles.value}>
+                    {versionLabel}
+                  </Text>
+                )}
+              />
+              <Divider style={{ backgroundColor: colors.outlineVariant }} />
+              <List.Item
+                title="Platform"
+                titleStyle={{ color: colors.onSurface }}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="android"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                right={() => (
+                  <Text variant="bodyMedium" style={styles.value}>
+                    {platformLabel}
+                  </Text>
+                )}
+              />
+              <Divider style={{ backgroundColor: colors.outlineVariant }} />
+              <List.Item
+                title="Signed in as"
+                titleStyle={{ color: colors.onSurface }}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="account-outline"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                right={() => (
+                  <Text variant="bodyMedium" style={styles.value}>
+                    @{username}
+                  </Text>
+                )}
+              />
+            </List.Section>
+
+            <List.Section
+              title="Links"
+              titleStyle={{ color: colors.onSurfaceVariant }}
+            >
+              <List.Item
+                title="GitHub"
+                titleStyle={{ color: colors.onSurface }}
+                style={[
+                  styles.linkItem,
+                  { backgroundColor: colors.elevation.level1 },
+                ]}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="github"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                right={({ style }) => (
+                  <MaterialDesignIcons
+                    name="chevron-right"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                onPress={() => openLink('https://github.com/rajofearth')}
+              />
+              <List.Item
+                title="Source code"
+                titleStyle={{ color: colors.onSurface }}
+                style={[
+                  styles.linkItem,
+                  { backgroundColor: colors.elevation.level1 },
+                ]}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="source-repository"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                right={({ style }) => (
+                  <MaterialDesignIcons
+                    name="chevron-right"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                onPress={() =>
+                  openLink('https://github.com/rajofearth/synomilo')
+                }
+              />
+              <List.Item
+                title="Email"
+                titleStyle={{ color: colors.onSurface }}
+                style={[
+                  styles.linkItem,
+                  { backgroundColor: colors.elevation.level1 },
+                ]}
+                left={({ style }) => (
+                  <MaterialDesignIcons
+                    name="email-outline"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                right={({ style }) => (
+                  <MaterialDesignIcons
+                    name="chevron-right"
+                    size={24}
+                    style={style}
+                    color={colors.onSurfaceVariant}
+                  />
+                )}
+                onPress={() => openLink('mailto:rajofearth@proton.me')}
+              />
+            </List.Section>
+
+            <List.Section
               title="Preferences"
               titleStyle={{ color: colors.onSurfaceVariant }}
             >
@@ -305,6 +456,11 @@ const styles = StyleSheet.create({
   },
   value: {
     alignSelf: 'center',
+  },
+  linkItem: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 20,
   },
   editForm: {
     paddingHorizontal: 16,

@@ -65,27 +65,6 @@ const SettingsScreen = ({ navigation }: any) => {
       <Divider style={{ backgroundColor: theme.color.borderDefault }} />
 
       <List.Section
-        title="Account"
-        titleStyle={{ color: theme.color.textSecondary }}
-      >
-        <List.Item
-          title="Profile"
-          titleStyle={{ color: theme.color.textPrimary }}
-          left={({ style }) => (
-            <MaterialDesignIcons
-              name="account-circle-outline"
-              size={24}
-              style={style}
-              color={theme.color.textSecondary}
-            />
-          )}
-          onPress={() => navigation.navigate('Profile')}
-        />
-      </List.Section>
-
-      <Divider style={{ backgroundColor: theme.color.borderDefault }} />
-
-      <List.Section
         title="About"
         titleStyle={{ color: theme.color.textSecondary }}
       >

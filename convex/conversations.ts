@@ -285,6 +285,68 @@ export const removeMember = mutation({
   },
 });
 
+export const updateGroup = mutation({
+  args: {
+    token: v.string(),
+    conversationId: v.id("conversations"),
+    name: v.string(),
+  },
+  handler: async (ctx, { token, conversationId, name }) => {
+    const me = await requireUser(ctx, token);
+    const membership = await membershipFor(ctx, conversationId, me._id);
+    if (!membership || membership.role !== "owner") {
+      throw new ConvexError("Only the group owner can edit the group");
+    }
+    const trimmed = name.trim();
+    if (trimmed.length < 2 || trimmed.length > 50) {
+      throw new ConvexError("Enter a group name");
+    }
+    await ctx.db.patch(conversationId, {
+      name: trimmed,
+      updatedAt: Date.now(),
+    });
+    return true;
+  },
+});
+
+export const deleteGroup = mutation({
+  args: { token: v.string(), conversationId: v.id("conversations") },
+  handler: async (ctx, { token, conversationId }) => {
+    const me = await requireUser(ctx, token);
+    const membership = await membershipFor(ctx, conversationId, me._id);
+    if (!membership || membership.role !== "owner") {
+      throw new ConvexError("Only the group owner can delete the group");
+    }
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_createdAt", (q) =>
+        q.eq("conversationId", conversationId),
+      )
+      .collect();
+    for (const message of messages) {
+      const reactions = await ctx.db
+        .query("reactions")
+        .withIndex("by_message", (q) => q.eq("messageId", message._id))
+        .collect();
+      for (const reaction of reactions) {
+        await ctx.db.delete(reaction._id);
+      }
+      await ctx.db.delete(message._id);
+    }
+    const memberships = await ctx.db
+      .query("members")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", conversationId),
+      )
+      .collect();
+    for (const member of memberships) {
+      await ctx.db.delete(member._id);
+    }
+    await ctx.db.delete(conversationId);
+    return true;
+  },
+});
+
 export const markRead = mutation({
   args: { token: v.string(), conversationId: v.id("conversations") },
   handler: async (ctx, { token, conversationId }) => {

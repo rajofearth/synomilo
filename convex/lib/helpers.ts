@@ -21,6 +21,12 @@ export async function requireUser(
   if (!user) {
     throw new ConvexError("User not found");
   }
+  const now = Date.now();
+  if (now - session.lastSeenAt > 30000 && "patch" in ctx.db) {
+    await (ctx.db as MutationCtx["db"]).patch(session._id, {
+      lastSeenAt: now,
+    });
+  }
   return user;
 }
 

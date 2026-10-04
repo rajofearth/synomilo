@@ -33,7 +33,7 @@ import TransferOwnership from '../components/conversations/screens/TransferOwner
 import Calls from '../components/calls/Calls';
 import { CallDetails } from '../components/calls/CallDetails';
 import Users from '../components/users/Users';
-import Groups from '../components/groups/Groups';
+import Groups from '../components/convex/GroupsList';
 import AIAgents from '../components/AIAgent/AIAgents';
 import QRScreen from '../components/conversations/screens/qr_screen';
 import SearchMessages from '../components/conversations/screens/SearchMessages';

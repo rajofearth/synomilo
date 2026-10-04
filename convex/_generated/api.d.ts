@@ -16,6 +16,8 @@ import type * as lib_helpers from "../lib/helpers.js";
 import type * as messages from "../messages.js";
 import type * as push from "../push.js";
 import type * as reactions from "../reactions.js";
+import type * as updates from "../updates.js";
+import type * as updatesNode from "../updatesNode.js";
 import type * as users from "../users.js";
 
 import type {
@@ -33,6 +35,8 @@ declare const fullApi: ApiFromModules<{
   messages: typeof messages;
   push: typeof push;
   reactions: typeof reactions;
+  updates: typeof updates;
+  updatesNode: typeof updatesNode;
   users: typeof users;
 }>;
 

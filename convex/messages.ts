@@ -131,9 +131,38 @@ export const list = query({
       });
     }
 
+    const memberRows = await ctx.db
+      .query("members")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", conversationId),
+      )
+      .collect();
+    const receipts = [];
+    for (const member of memberRows) {
+      if (member.userId === me._id) {
+        continue;
+      }
+      const memberSessions = await ctx.db
+        .query("sessions")
+        .withIndex("by_user", (q) => q.eq("userId", member.userId))
+        .collect();
+      let lastSeenAt = 0;
+      for (const session of memberSessions) {
+        if (session.lastSeenAt > lastSeenAt) {
+          lastSeenAt = session.lastSeenAt;
+        }
+      }
+      receipts.push({
+        userId: member.userId,
+        lastReadAt: member.lastReadAt,
+        lastSeenAt,
+      });
+    }
+
     return {
       messages: result,
       hasMore: pageDesc.length === take,
+      receipts,
     };
   },
 });
