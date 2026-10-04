@@ -28,10 +28,15 @@ export const updateProfile = mutation({
     token: v.string(),
     displayName: v.optional(v.string()),
     username: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { token, displayName, username }) => {
+  handler: async (ctx, { token, displayName, username, avatarUrl }) => {
     const me = await requireUser(ctx, token);
-    const patch: { displayName?: string; username?: string } = {};
+    const patch: {
+      displayName?: string;
+      username?: string;
+      avatarUrl?: string;
+    } = {};
 
     if (displayName !== undefined) {
       const nextDisplayName = displayName.trim();
@@ -56,6 +61,13 @@ export const updateProfile = mutation({
         throw new ConvexError("That username is taken");
       }
       patch.username = nextUsername;
+    }
+
+    if (avatarUrl !== undefined) {
+      if (!avatarUrl.startsWith("http")) {
+        throw new ConvexError("Invalid image");
+      }
+      patch.avatarUrl = avatarUrl;
     }
 
     if (Object.keys(patch).length > 0) {

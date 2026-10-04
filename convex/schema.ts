@@ -25,6 +25,7 @@ export default defineSchema({
     type: v.union(v.literal("dm"), v.literal("group")),
     name: v.optional(v.string()),
     emoji: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
     dmKey: v.optional(v.string()),
     createdBy: v.id("users"),
     createdAt: v.number(),

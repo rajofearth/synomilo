@@ -8,6 +8,7 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Dialog, FAB, Portal } from 'react-native-paper';
@@ -24,6 +25,7 @@ type ConversationRow = {
   type: 'dm' | 'group';
   title: string;
   emoji: string | null;
+  avatarUrl?: string | null;
   memberCount: number;
   lastMessageAt: number;
   lastMessagePreview: string;
@@ -174,14 +176,24 @@ const ConversationsList = ({ navigation }: any) => {
                   { backgroundColor: theme.color.extendedPrimary50 },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.rowAvatarInitials,
-                    { color: theme.color.primary },
-                  ]}
-                >
-                  {initialsFor(item.title)}
-                </Text>
+                {item.avatarUrl ? (
+                  <Image
+                    source={{ uri: item.avatarUrl }}
+                    style={[
+                      styles.rowAvatarImage,
+                      item.type === 'group' && styles.rowAvatarImageGroup,
+                    ]}
+                  />
+                ) : (
+                  <Text
+                    style={[
+                      styles.rowAvatarInitials,
+                      { color: theme.color.primary },
+                    ]}
+                  >
+                    {initialsFor(item.title)}
+                  </Text>
+                )}
               </View>
               <View style={styles.rowBody}>
                 <View style={styles.rowTop}>
@@ -198,7 +210,7 @@ const ConversationsList = ({ navigation }: any) => {
                   <Text
                     style={[
                       theme.typography.caption1.regular,
-                      { color: theme.color.textTertiary },
+                      { color: theme.color.textSecondary },
                     ]}
                   >
                     {formatTime(item.lastMessageAt)}
@@ -371,6 +383,14 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   rowAvatarGroup: {
+    borderRadius: 16,
+  },
+  rowAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 26,
+  },
+  rowAvatarImageGroup: {
     borderRadius: 16,
   },
   rowAvatarInitials: {

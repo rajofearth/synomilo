@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
@@ -24,6 +25,7 @@ type GroupRow = {
   type: 'dm' | 'group';
   title: string;
   emoji: string | null;
+  avatarUrl: string | null;
   memberCount: number;
   lastMessagePreview: string;
 };
@@ -179,21 +181,28 @@ const GroupsList = ({ navigation }: any) => {
                 })
               }
             >
-              <View
-                style={[
-                  styles.groupAvatar,
-                  { backgroundColor: theme.color.extendedPrimary50 },
-                ]}
-              >
-                <Text
+              {item.avatarUrl ? (
+                <Image
+                  source={{ uri: item.avatarUrl }}
+                  style={styles.groupAvatar}
+                />
+              ) : (
+                <View
                   style={[
-                    styles.groupInitials,
-                    { color: theme.color.primary },
+                    styles.groupAvatar,
+                    { backgroundColor: theme.color.extendedPrimary50 },
                   ]}
                 >
-                  {initialsFor(item.title)}
-                </Text>
-              </View>
+                  <Text
+                    style={[
+                      styles.groupInitials,
+                      { color: theme.color.primary },
+                    ]}
+                  >
+                    {initialsFor(item.title)}
+                  </Text>
+                </View>
+              )}
               <View style={styles.rowBody}>
                 <Text
                   style={[

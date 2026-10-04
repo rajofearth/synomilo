@@ -3,11 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
+  Pressable,
   FlatList,
   TextInput,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
@@ -125,7 +126,7 @@ const UsersList = ({ navigation }: any) => {
           data={data}
           keyExtractor={item => item._id}
           renderItem={({ item }) => (
-            <TouchableOpacity
+            <Pressable
               style={({ pressed }) => [
                 styles.row,
                 pressed && { backgroundColor: theme.color.background3 },
@@ -139,14 +140,25 @@ const UsersList = ({ navigation }: any) => {
                   { backgroundColor: theme.color.extendedPrimary50 },
                 ]}
               >
-                <Text
-                  style={[styles.avatarText, { color: theme.color.primary }]}
-                >
-                  {initialsFor(item.displayName)}
-                </Text>
+                {item.avatarUrl ? (
+                  <Image
+                    source={{ uri: item.avatarUrl }}
+                    style={styles.avatarImage}
+                  />
+                ) : (
+                  <Text
+                    style={[
+                      styles.avatarText,
+                      { color: theme.color.textPrimary },
+                    ]}
+                  >
+                    {initialsFor(item.displayName)}
+                  </Text>
+                )}
               </View>
               <View style={styles.rowBody}>
                 <Text
+                  numberOfLines={1}
                   style={[
                     theme.typography.body.medium,
                     { color: theme.color.textPrimary },
@@ -155,6 +167,7 @@ const UsersList = ({ navigation }: any) => {
                   {item.displayName}
                 </Text>
                 <Text
+                  numberOfLines={1}
                   style={[
                     theme.typography.caption1.regular,
                     { color: theme.color.textSecondary },
@@ -166,7 +179,7 @@ const UsersList = ({ navigation }: any) => {
               {openingId === item._id && (
                 <ActivityIndicator size="small" color={theme.color.primary} />
               )}
-            </TouchableOpacity>
+            </Pressable>
           )}
           ListEmptyComponent={
             <View style={styles.center}>
@@ -244,6 +257,12 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 24,
   },
   avatarText: {
     fontSize: 16,
@@ -251,6 +270,7 @@ const styles = StyleSheet.create({
   },
   rowBody: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 12,
   },
 });

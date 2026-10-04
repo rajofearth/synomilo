@@ -765,7 +765,7 @@ const ChatScreen = ({ route, navigation }: any) => {
       const deleted = !!item.deletedAt;
       const isHighlighted = highlightId === item._id;
       const tick = mine && !deleted ? tickFor(item) : null;
-      const timeColor = mine ? '#E9E4FF' : theme.color.textTertiary;
+      const timeColor = mine ? '#E9E4FF' : theme.color.textSecondary;
 
       return (
         <View>
@@ -828,14 +828,14 @@ const ChatScreen = ({ route, navigation }: any) => {
                   <MaterialDesignIcons
                     name="share"
                     size={12}
-                    color={mine ? '#E9E4FF' : theme.color.textTertiary}
+                    color={mine ? '#E9E4FF' : theme.color.textSecondary}
                   />
                   <Text
                     style={[
                       theme.typography.caption2?.regular ??
                         theme.typography.caption1.regular,
                       styles.forwardedText,
-                      { color: mine ? '#E9E4FF' : theme.color.textTertiary },
+                      { color: mine ? '#E9E4FF' : theme.color.textSecondary },
                     ]}
                   >
                     Forwarded from {item.forwardedFrom}
@@ -847,7 +847,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                   <MaterialDesignIcons
                     name="cancel"
                     size={14}
-                    color={mine ? '#E9E4FF' : theme.color.textTertiary}
+                    color={mine ? '#E9E4FF' : theme.color.textSecondary}
                   />
                   <Text
                     style={[

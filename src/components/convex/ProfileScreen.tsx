@@ -1,9 +1,18 @@
-import React, { useCallback, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, View } from 'react-native';
-import { useMutation } from 'convex/react';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Image,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useMutation, useQuery } from 'convex/react';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import DeviceInfo from 'react-native-device-info';
+import { launchImageLibrary } from 'react-native-image-picker';
 import {
+  ActivityIndicator,
   Appbar,
   Avatar,
   Button,
@@ -30,21 +39,56 @@ const initialsFor = (name: string): string =>
     .join('')
     .toUpperCase() || '?';
 
+const uriToBlob = (uri: string): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = () => resolve(xhr.response);
+    xhr.onerror = () => reject(new Error('Could not read the selected photo'));
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send();
+  });
+
 const ProfileScreen = ({ navigation }: any) => {
   const { colors } = usePaperTheme();
   const { user, token, signOut } = useSession();
   const updateProfile = useMutation(api.users.updateProfile);
+  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
 
   const [editing, setEditing] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState('');
   const [usernameDraft, setUsernameDraft] = useState('');
+  const [avatarDraft, setAvatarDraft] = useState<string | null>(null);
+  const [pendingAvatarStorageId, setPendingAvatarStorageId] = useState<any>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [saving, setSaving] = useState(false);
   const [signOutVisible, setSignOutVisible] = useState(false);
   const [snackbar, setSnackbar] = useState<string | null>(null);
 
+  const uploadedAvatarUrl = useQuery(
+    api.files.url,
+    token && pendingAvatarStorageId
+      ? { token, storageId: pendingAvatarStorageId }
+      : 'skip',
+  );
+
+  useEffect(() => {
+    if (!pendingAvatarStorageId || uploadedAvatarUrl === undefined) {
+      return;
+    }
+    if (uploadedAvatarUrl) {
+      setAvatarDraft(uploadedAvatarUrl);
+    } else {
+      setSnackbar('Could not load the uploaded photo');
+    }
+    setPendingAvatarStorageId(null);
+    setUploadingAvatar(false);
+  }, [uploadedAvatarUrl, pendingAvatarStorageId]);
+
   const displayName = user?.displayName ?? 'Unknown';
   const username = user?.username ?? 'unknown';
   const initials = initialsFor(displayName);
+  const avatarUri = avatarDraft ?? user?.avatarUrl ?? null;
   const versionLabel = `${DeviceInfo.getVersion()} (${DeviceInfo.getBuildNumber()})`;
   const platformLabel = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
 
@@ -57,19 +101,19 @@ const ProfileScreen = ({ navigation }: any) => {
   const openEdit = useCallback(() => {
     setDisplayNameDraft(displayName);
     setUsernameDraft(username);
+    setAvatarDraft(null);
     setEditing(true);
   }, [displayName, username]);
 
-  const toggleEdit = useCallback(() => {
-    if (editing) {
-      setEditing(false);
-      return;
-    }
-    openEdit();
-  }, [editing, openEdit]);
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setAvatarDraft(null);
+    setPendingAvatarStorageId(null);
+    setUploadingAvatar(false);
+  }, []);
 
   const handleSave = useCallback(async () => {
-    if (!token || saving) {
+    if (!token || saving || uploadingAvatar) {
       return;
     }
     setSaving(true);
@@ -78,6 +122,7 @@ const ProfileScreen = ({ navigation }: any) => {
         token,
         displayName: displayNameDraft,
         username: usernameDraft,
+        avatarUrl: avatarDraft ?? undefined,
       });
       setEditing(false);
       setSnackbar('Profile updated');
@@ -86,7 +131,45 @@ const ProfileScreen = ({ navigation }: any) => {
     } finally {
       setSaving(false);
     }
-  }, [token, saving, updateProfile, displayNameDraft, usernameDraft]);
+  }, [
+    token,
+    saving,
+    uploadingAvatar,
+    updateProfile,
+    displayNameDraft,
+    usernameDraft,
+    avatarDraft,
+  ]);
+
+  const pickAvatar = useCallback(async () => {
+    if (!token || uploadingAvatar) {
+      return;
+    }
+    const result = await launchImageLibrary({
+      mediaType: 'photo',
+      selectionLimit: 1,
+    });
+    const asset = result.assets?.[0];
+    if (!asset?.uri) {
+      return;
+    }
+    setUploadingAvatar(true);
+    try {
+      const postUrl = await generateUploadUrl({ token });
+      const blob = await uriToBlob(asset.uri);
+      const mime = asset.type ?? 'image/jpeg';
+      const response = await fetch(postUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': mime },
+        body: blob,
+      });
+      const { storageId } = await response.json();
+      setPendingAvatarStorageId(storageId);
+    } catch (error) {
+      setUploadingAvatar(false);
+      setSnackbar(convexErrorMessage(error, 'Could not upload the photo'));
+    }
+  }, [token, uploadingAvatar, generateUploadUrl]);
 
   const handleSignOut = useCallback(() => {
     setSignOutVisible(false);
@@ -107,12 +190,13 @@ const ProfileScreen = ({ navigation }: any) => {
         <Appbar.Action
           icon={({ size }) => (
             <MaterialDesignIcons
-              name="pencil-outline"
+              name={editing ? 'check' : 'pencil-outline'}
               size={size}
-              color={colors.onSurfaceVariant}
+              color={editing ? colors.primary : colors.onSurfaceVariant}
             />
           )}
-          onPress={toggleEdit}
+          onPress={editing ? handleSave : openEdit}
+          disabled={editing && (saving || uploadingAvatar)}
         />
       </Appbar.Header>
 
@@ -121,12 +205,42 @@ const ProfileScreen = ({ navigation }: any) => {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
-          <Avatar.Text
-            size={88}
-            label={initials}
-            style={{ backgroundColor: colors.primaryContainer }}
-            color={colors.onPrimaryContainer}
-          />
+          <View style={styles.avatarWrap}>
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+            ) : (
+              <Avatar.Text
+                size={88}
+                label={initials}
+                style={{ backgroundColor: colors.primaryContainer }}
+                color={colors.onPrimaryContainer}
+              />
+            )}
+            {editing && (
+              <TouchableOpacity
+                style={[
+                  styles.cameraBadge,
+                  {
+                    backgroundColor: colors.primary,
+                    borderColor: colors.surface,
+                  },
+                ]}
+                onPress={pickAvatar}
+                disabled={uploadingAvatar}
+                activeOpacity={0.8}
+              >
+                {uploadingAvatar ? (
+                  <ActivityIndicator size={14} color={colors.onPrimary} />
+                ) : (
+                  <MaterialDesignIcons
+                    name="camera"
+                    size={16}
+                    color={colors.onPrimary}
+                  />
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
           <Text
             variant="headlineSmall"
             style={[styles.name, { color: colors.onSurface }]}
@@ -169,7 +283,7 @@ const ProfileScreen = ({ navigation }: any) => {
                 textColor={colors.onSurfaceVariant}
                 style={styles.actionButton}
                 disabled={saving}
-                onPress={() => setEditing(false)}
+                onPress={cancelEdit}
               >
                 Cancel
               </Button>
@@ -449,6 +563,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 24,
     paddingBottom: 16,
+  },
+  avatarWrap: {
+    position: 'relative',
+  },
+  avatarImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+  },
+  cameraBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   name: {
     marginTop: 16,

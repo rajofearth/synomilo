@@ -2,23 +2,11 @@ import {
   action,
   internalMutation,
   internalQuery,
+  mutation,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { v } from "convex/values";
-
-declare const process: { env: Record<string, string | undefined> };
-
-type GitHubAsset = {
-  name?: string;
-  url?: string;
-  size?: number;
-};
-
-type GitHubRelease = {
-  tag_name?: string;
-  body?: string | null;
-  assets?: GitHubAsset[];
-};
+import { ConvexError, v } from "convex/values";
+import { requireUser } from "./lib/helpers";
 
 function parseVersion(value: string): [number, number, number] | null {
   const match = value
@@ -48,46 +36,50 @@ function isNewer(candidate: string, current: string): boolean {
   return false;
 }
 
-export const getCached = internalQuery({
-  args: { version: v.string() },
-  handler: async (ctx, { version }) => {
-    return await ctx.db
-      .query("updateCache")
-      .withIndex("by_version", (q) => q.eq("version", version))
-      .first();
-  },
-});
-
-export const replaceCache = internalMutation({
+export const publish = mutation({
   args: {
+    token: v.string(),
     version: v.string(),
+    notes: v.optional(v.string()),
     storageId: v.id("_storage"),
-    size: v.number(),
-    notes: v.string(),
+    size: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const me = await requireUser(ctx, args.token);
+    if (me.username !== "yashraj") {
+      throw new ConvexError("Only the maintainer can publish updates");
+    }
+    const version = args.version.replace(/^v/i, "").trim();
+    if (!parseVersion(version)) {
+      throw new ConvexError("Version must look like 1.0.0");
+    }
     const stale = await ctx.db.query("updateCache").collect();
     for (const row of stale) {
       await ctx.db.delete(row._id);
       await ctx.storage.delete(row.storageId);
     }
     await ctx.db.insert("updateCache", {
-      version: args.version,
+      version,
       storageId: args.storageId,
-      size: args.size,
-      notes: args.notes,
+      size: args.size ?? 0,
+      notes: args.notes ?? "",
       createdAt: Date.now(),
     });
+    return version;
   },
 });
 
-export const dropVersion = internalMutation({
-  args: { version: v.string() },
-  handler: async (ctx, { version }) => {
-    const rows = await ctx.db
-      .query("updateCache")
-      .withIndex("by_version", (q) => q.eq("version", version))
-      .collect();
+export const getLatest = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("updateCache").order("desc").first();
+  },
+});
+
+export const removePublished = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("updateCache").collect();
     for (const row of rows) {
       await ctx.db.delete(row._id);
       await ctx.storage.delete(row.storageId);
@@ -98,80 +90,22 @@ export const dropVersion = internalMutation({
 export const check = action({
   args: { currentVersion: v.string() },
   handler: async (ctx, { currentVersion }) => {
-    const token = process.env.GITHUB_TOKEN;
-    const repo = process.env.GITHUB_REPO;
-    if (!token || !repo) {
+    const latest = await ctx.runQuery(internal.updates.getLatest, {});
+    if (!latest) {
       return null;
     }
-
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "synomilo-updater",
+    if (!isNewer(latest.version, currentVersion)) {
+      return null;
+    }
+    const url = await ctx.storage.getUrl(latest.storageId);
+    if (!url) {
+      return null;
+    }
+    return {
+      version: latest.version,
+      notes: latest.notes ?? "",
+      url,
+      size: latest.size ?? 0,
     };
-
-    try {
-      const releaseResponse = await fetch(
-        `https://api.github.com/repos/${repo}/releases/latest`,
-        { headers },
-      );
-      if (!releaseResponse.ok) {
-        return null;
-      }
-      const release = (await releaseResponse.json()) as GitHubRelease;
-      const version = (release.tag_name ?? "").replace(/^v/i, "").trim();
-      if (!version || !isNewer(version, currentVersion)) {
-        return null;
-      }
-
-      const notes = (release.body ?? "").slice(0, 500);
-      const cached = await ctx.runQuery(internal.updates.getCached, {
-        version,
-      });
-      if (cached) {
-        const cachedUrl = await ctx.storage.getUrl(cached.storageId);
-        if (cachedUrl) {
-          return {
-            version,
-            notes: cached.notes ?? notes,
-            url: cachedUrl,
-            size: cached.size ?? 0,
-          };
-        }
-        await ctx.runMutation(internal.updates.dropVersion, { version });
-      }
-
-      const asset = (release.assets ?? []).find((candidate) =>
-        (candidate.name ?? "").toLowerCase().endsWith(".apk"),
-      );
-      if (!asset?.url) {
-        return null;
-      }
-
-      const downloaded = await ctx.runAction(
-        internal.updatesNode.downloadAndCache,
-        {
-          version,
-          assetUrl: asset.url,
-          notes,
-        },
-      );
-
-      await ctx.runMutation(internal.updates.replaceCache, {
-        version,
-        storageId: downloaded.storageId,
-        size: downloaded.size,
-        notes,
-      });
-
-      const url = await ctx.storage.getUrl(downloaded.storageId);
-      if (!url) {
-        return null;
-      }
-      return { version, notes, url, size: downloaded.size };
-    } catch (error) {
-      console.error("update check failed", error);
-      return null;
-    }
   },
 });
