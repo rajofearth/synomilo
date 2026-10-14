@@ -24,10 +24,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Node 20
+      - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node 22 (npm 10.9+) is required. npm 10 on Node 20 fails `npm ci`
+          # on Linux with EBADPLATFORM for `fsevents`, the macOS-only optional
+          # dep Metro pulls in. This broke every release since v1.0.0.
+          node-version: '22'
           cache: npm
 
       - name: Configure Android SDK
