@@ -2,11 +2,12 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useQuery, useMutation } from 'convex/react';
-import { Appbar, Searchbar, Avatar, Divider, ActivityIndicator } from 'react-native-paper';
+import { Appbar, Searchbar, Divider, ActivityIndicator } from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from './UserAvatar';
 
 type ForwardableMessage = {
   _id: string;
@@ -24,6 +25,7 @@ type ConversationRow = {
   type: 'dm' | 'group';
   title: string;
   emoji: string | null;
+  avatarUrl: string | null;
   otherUserId: string | null;
   memberCount: number;
   lastMessageAt: number;
@@ -32,11 +34,6 @@ type ConversationRow = {
   typingName: string | null;
   muted: boolean;
 };
-
-const initialsFor = (name: string): string =>
-  name.split(/\s+/).filter(Boolean).slice(0, 2)
-    .map(part => part[0]?.toUpperCase() ?? '')
-    .join('');
 
 const iconForKind = (kind: ForwardableMessage['kind']): string => {
   if (kind === 'image') return 'image';
@@ -105,6 +102,7 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
   const renderItem = useCallback(
     ({ item }: { item: ConversationRow }) => {
       const busy = sendingId === item._id;
+      const corner = item.type === 'group' ? 16 : 22;
       return (
         <TouchableOpacity
           style={styles.row}
@@ -112,12 +110,16 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
           disabled={!!sendingId}
           onPress={() => forwardTo(item)}
         >
-          <Avatar.Text
+          <UserAvatar
+            entity={item}
+            name={item.title}
             size={44}
-            label={initialsFor(item.title)}
-            style={{
+            variant="paper"
+            radius={corner}
+            imageStyle={{ width: 44, height: 44, borderRadius: corner }}
+            initialsStyle={{
               backgroundColor: theme.color.extendedPrimary50,
-              borderRadius: item.type === 'group' ? 16 : 22,
+              borderRadius: corner,
             }}
             labelStyle={[styles.avatarLabel, { color: theme.color.primary }]}
           />

@@ -38,6 +38,76 @@
         </intent-filter>
       </activity>
 
+      <!--
+        The ringing screen.
+
+        `fullScreenAction` / `pressAction` on the incoming-call notification point
+        at this activity (src/notifications/callNotifications.ts). It is a plain
+        Activity - not a ReactActivity - because it has to be able to draw
+        Accept/Decline over the keyguard without booting the JS runtime, which is
+        exactly what the previous target (MainActivity, which deliberately has no
+        showWhenLocked/turnScreenOn) could not do.
+
+        exported="false": only this app may launch it (Notifee uses an explicit,
+        same-UID intent). No LAUNCHER filter, so it cannot be started arbitrarily.
+      -->
+      <activity
+        android:name="com.rajofearth.synomilo.IncomingCallActivity"
+        android:theme="@style/Theme.CallRinging"
+        android:launchMode="singleTop"
+        android:showWhenLocked="true"
+        android:turnScreenOn="true"
+        android:excludeFromRecents="true"
+        android:taskAffinity="com.rajofearth.synomilo.call"
+        android:noHistory="true"
+        android:exported="false" />
+
+      <!--
+        EXACTLY ONE FirebaseMessagingService.
+
+        Before this block the merged manifest declared three services bound to
+        com.google.firebase.MESSAGING_EVENT:
+          1. io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService
+             (from @react-native-firebase/messaging)  <- the one we keep
+          2. com.cometchat.pushnotification.reactnative.CometChatFcmService
+             (from @cometchat/push-notifications-react-native)
+          3. com.google.firebase.messaging.FirebaseMessagingService
+             (the Firebase SDK base class, android:priority="-500")
+
+        Android binds MESSAGING_EVENT to exactly ONE service, so which of 1/2/3
+        won was undefined - a message could land in a service that ignores it,
+        which is the strongest Android-side explanation for "sometimes it rings,
+        sometimes it doesn't". It also meant onNewToken could go to a service with
+        no JS listener, silently killing push-token refresh.
+
+        (2) is removed outright: this app's calls are Convex + react-native-webrtc,
+        never CometChat Calls, so CometChatFcmService was a third, competing ringer
+        that could start IncomingCallService and try to CometChat.acceptCall() a
+        sessionId this app never created.
+        (3) is removed because (1) is always present and always wins on priority;
+        keeping the base-class fallback buys nothing but another claimant.
+        Direct-boot (pre-unlock) push reception is the one capability lost, and it
+        is irrelevant for a call UI that needs the keyguard anyway.
+      -->
+      <service
+        android:name="com.cometchat.pushnotification.reactnative.CometChatFcmService"
+        tools:node="remove" />
+      <service
+        android:name="com.google.firebase.messaging.FirebaseMessagingService"
+        tools:node="remove" />
+
+      <!--
+        Notifee ships its foreground service as foregroundServiceType="shortService",
+        which Android 14+ kills after 3 minutes - useless for a call. Override it to
+        phoneCall. MANAGE_OWN_CALLS and FOREGROUND_SERVICE_PHONE_CALL are merged in by
+        the CometChat push library, which satisfies the Android 14 prerequisite for
+        starting a phoneCall-typed foreground service.
+      -->
+      <service
+        android:name="app.notifee.core.ForegroundService"
+        android:foregroundServiceType="phoneCall"
+        tools:replace="android:foregroundServiceType" />
+
       <meta-data
         android:name="com.google.firebase.messaging.default_notification_channel_id"
         android:value="default"

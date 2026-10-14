@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
+  AppState,
   View,
   Text,
   StyleSheet,
@@ -22,12 +24,33 @@ import {
 import Video from 'react-native-video';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
-import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from '../convex/UserAvatar';
 import { dismissCallNotification } from '../../notifications/callNotifications';
+import {
+  hideOngoingCallNotification,
+  refreshOngoingCallActions,
+  showOngoingCallNotification,
+} from '../../notifications/ongoingCall';
+import {
+  applyAudioRoute,
+  callMediaState,
+  releaseAudioRoute,
+} from '../../notifications/callMediaState';
+import { useCallStore } from './callStore';
+import {
+  deriveClockOffset,
+  elapsedSeconds,
+  formatElapsed,
+} from '../../utils/callDuration';
 
 const ICE_SERVERS = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
+
+/** Mirrors convex/calls.ts RING_TIMEOUT_MS. */
+const RING_TIMEOUT_MS = 60000;
+/** How long a terminal message ("Call declined") stays on screen before popping. */
+const NOTICE_MS = 1600;
 
 const CallScreen = ({ route, navigation }: any) => {
   const { token } = useSession();
@@ -53,6 +76,8 @@ const CallScreen = ({ route, navigation }: any) => {
 
   const pcRef = useRef<any>(null);
   const localStreamRef = useRef<any>(null);
+  const remoteStreamRef = useRef<any>(null);
+  const pcListenersRef = useRef<Array<[string, (event: any) => void]>>([]);
   const pendingIceRef = useRef<any[]>([]);
   const remoteDescSetRef = useRef(false);
   const appliedSignalsRef = useRef<Set<string>>(new Set());
@@ -62,30 +87,85 @@ const CallScreen = ({ route, navigation }: any) => {
   const [remoteURL, setRemoteURL] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  // Difference between the server clock and this device's clock, sampled once
+  // per call. `answeredAt` is a server timestamp; without this the duration
+  // goes negative on any skewed device. Null until (and unless) the server ships
+  // `serverNow` - the helper clamps to 0 in that case rather than showing garbage.
+  const clockOffsetRef = useRef<number | null>(null);
+
+  /**
+   * Guards against the double-`goBack()`: the media effect's cleanup calls
+   * `pc.close()`, which synchronously emits `connectionstatechange: 'closed'`,
+   * which used to call `hangUp()` again and pop one screen further than intended.
+   * A ref rather than state because the peer's callbacks are outside React.
+   */
+  const leavingRef = useRef(false);
+  const hangUpRef = useRef<(reason?: string) => void>(() => {});
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setActiveCall = useCallStore(state => state.setActive);
+  const setScreenVisible = useCallStore(state => state.setScreenVisible);
 
   useEffect(() => {
     dismissCallNotification(callId);
   }, [callId]);
 
+  useEffect(() => {
+    setScreenVisible(true);
+    return () => setScreenVisible(false);
+  }, [setScreenVisible]);
+
   const leave = useCallback(
-    (message?: string) => {
-      if (leaving) {
+    (reason?: string) => {
+      if (leavingRef.current) {
         return;
       }
-      setLeaving(true);
-      navigation.goBack();
+      leavingRef.current = true;
+      if (!reason) {
+        navigation.goBack();
+        return;
+      }
+      // Terminal states used to pop silently, which is why a declined call and a
+      // failed call looked identical from the other end.
+      setNotice(reason);
+      noticeTimerRef.current = setTimeout(() => navigation.goBack(), NOTICE_MS);
     },
-    [leaving, navigation],
+    [navigation],
   );
 
-  const hangUp = useCallback(async () => {
-    if (token) {
-      endCall({ token, callId: callId as any }).catch(() => {});
-    }
-    leave();
-  }, [token, endCall, callId, leave]);
+  const hangUp = useCallback(
+    (reason?: string) => {
+      if (token) {
+        endCall({ token, callId: callId as any }).catch(() => {});
+      }
+      hideOngoingCallNotification(callId).catch(() => {});
+      setActiveCall(null);
+      leave(reason);
+    },
+    [token, endCall, callId, leave, setActiveCall],
+  );
+
+  useEffect(() => {
+    hangUpRef.current = hangUp;
+  });
+
+  // Leave the teardown of the ongoing notification to `hangUp` and unmount only:
+  // this effect must not re-run on every status change and cancel a notification
+  // that is about to be shown again.
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current);
+      }
+      hideOngoingCallNotification(callId).catch(() => {});
+      setActiveCall(null);
+      releaseAudioRoute();
+    },
+    [callId, setActiveCall],
+  );
 
   // Set up local media + peer connection.
   useEffect(() => {
@@ -119,7 +199,12 @@ const CallScreen = ({ route, navigation }: any) => {
           .forEach((track: any) => pc.addTrack(track, stream));
 
         const pcAny = pc as any;
-        pcAny.addEventListener('icecandidate', (event: any) => {
+        const register = (event: string, handler: (payload: any) => void) => {
+          pcAny.addEventListener(event, handler);
+          pcListenersRef.current.push([event, handler]);
+        };
+
+        register('icecandidate', (event: any) => {
           if (event.candidate && token) {
             sendSignal({
               token,
@@ -129,16 +214,22 @@ const CallScreen = ({ route, navigation }: any) => {
             }).catch(() => {});
           }
         });
-        pcAny.addEventListener('track', (event: any) => {
+        register('track', (event: any) => {
           const [remoteStream] = event.streams;
           if (remoteStream) {
+            remoteStreamRef.current = remoteStream;
             setRemoteURL(remoteStream.toURL());
           }
         });
-        pcAny.addEventListener('connectionstatechange', () => {
+        register('connectionstatechange', () => {
           const state = pcAny.connectionState;
+          if (disposed || leavingRef.current) {
+            return;
+          }
           if (state === 'failed' || state === 'closed') {
-            hangUp();
+            // Previously a silent hang: the connection dropped and the user saw the
+            // screen simply go away with no explanation.
+            hangUpRef.current('Call ended · connection lost');
           }
         });
 
@@ -156,19 +247,40 @@ const CallScreen = ({ route, navigation }: any) => {
         }
       } catch (error) {
         console.log('[CallScreen] setup error', error);
+        if (!disposed) {
+          setSetupError(
+            'Could not start your camera and microphone. Check the app permissions.',
+          );
+        }
       }
     })();
 
     return () => {
       disposed = true;
+      // Remove the listeners BEFORE closing: `close()` fires `closed`, which would
+      // otherwise re-enter hangUp() during teardown.
+      pcListenersRef.current.forEach(([event, handler]) => {
+        try {
+          (pcRef.current as any)?.removeEventListener(event, handler);
+        } catch {}
+      });
+      pcListenersRef.current = [];
       try {
         pcRef.current?.close();
       } catch {}
+      remoteStreamRef.current
+        ?.getTracks?.()
+        .forEach((track: any) => track.stop());
+      remoteStreamRef.current = null;
       localStreamRef.current
         ?.getTracks?.()
         .forEach((track: any) => track.stop());
+      localStreamRef.current = null;
     };
-  }, [token, callId, type, role, sendSignal, hangUp]);
+    // `hangUp` is deliberately NOT a dependency. It closes over the leaving flag,
+    // so putting it here used to re-run this effect - a second getUserMedia(), a
+    // second RTCPeerConnection and a second SDP offer for a call being torn down.
+  }, [token, callId, type, role, sendSignal]);
 
   // Apply incoming WebRTC signals exactly once each.
   useEffect(() => {
@@ -229,41 +341,160 @@ const CallScreen = ({ route, navigation }: any) => {
     if (!call) {
       return;
     }
-    if (call.status === 'rejected' || call.status === 'missed' || call.status === 'ended') {
-      leave();
+    if (call.status === 'rejected') {
+      // `rejected` and `missed` mean different things to the two sides of the call.
+      leave(role === 'caller' ? 'Call declined' : 'Call ended');
+    } else if (call.status === 'missed') {
+      leave(role === 'caller' ? 'No answer' : 'Missed call');
+    } else if (call.status === 'ended') {
+      leave('Call ended');
     }
-  }, [call?.status, leave, call]);
+  }, [call?.status, leave, call, role]);
+
+  useEffect(() => {
+    if (call?.serverNow) {
+      clockOffsetRef.current = deriveClockOffset(call.serverNow, Date.now());
+    }
+  }, [call?.serverNow]);
 
   useEffect(() => {
     if (call?.status !== 'active' || !call.answeredAt) {
       return;
     }
-    const timer = setInterval(
-      () => setElapsed(Math.floor((Date.now() - call.answeredAt!) / 1000)),
-      1000,
-    );
+    // Seed immediately so an answered call does not paint 00:00 and then jump
+    // to the real value a second later.
+    const tick = () =>
+      setElapsed(
+        elapsedSeconds(call.answeredAt, Date.now(), clockOffsetRef.current),
+      );
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [call?.status, call?.answeredAt]);
 
-  // Caller times out if nobody answers.
+  // Caller times out if nobody answers. This timer only runs while JS is running,
+  // which is why the same job is also done server-side by `markTimedOut`.
   useEffect(() => {
     if (role !== 'caller' || call?.status !== 'ringing') {
       return;
     }
     const timer = setTimeout(() => {
-      hangUp();
-    }, 60000);
+      hangUpRef.current('No answer');
+    }, RING_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [role, call?.status, hangUp]);
+  }, [role, call?.status]);
+
+  /**
+   * The ongoing-call notification. It did not exist before this: minimising during
+   * a call produced nothing at all, so "I may know there's a call but nothing
+   * else" was accurate.
+   *
+   * It is posted when the app is backgrounded and withdrawn when the user comes
+   * back, because the call screen already shows everything the notification shows
+   * while the app is visible.
+   */
+  useEffect(() => {
+    if (call?.status !== 'active' || !call.answeredAt) {
+      return;
+    }
+    const answeredAt = call.answeredAt;
+    setActiveCall({
+      callId,
+      role,
+      peerName,
+      type,
+      answeredAt,
+      clockOffset: clockOffsetRef.current,
+    });
+
+    const post = () =>
+      showOngoingCallNotification({
+        callId,
+        peerName,
+        type,
+        answeredAt,
+        clockOffset: clockOffsetRef.current,
+      }).catch(() => {});
+
+    // Post straight away when the app is already in the background - a peer can
+    // accept while we are minimised, and waiting for the next AppState change
+    // would mean no notification at all for a call that is already live.
+    if (AppState.currentState !== 'active') {
+      post();
+    }
+
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        hideOngoingCallNotification(callId).catch(() => {});
+        return;
+      }
+      post();
+    });
+    return () => subscription.remove();
+  }, [call?.status, call?.answeredAt, callId, peerName, role, type, setActiveCall]);
+
+  /**
+   * The notification's Mute and Speaker buttons are dispatched by Notifee outside
+   * React. They write to `callMediaState`; this applies the change to the live peer
+   * connection and refreshes the notification's action labels.
+   *
+   * It only refreshes - it never creates. Toggling mute with the on-screen button
+   * sets the same flag, and that must not pop a notification over a call the user
+   * is already looking at.
+   */
+  useEffect(() => {
+    return callMediaState.subscribe(next => {
+      const audioTrack = localStreamRef.current
+        ?.getAudioTracks?.()
+        ?.find(() => true);
+      if (audioTrack) {
+        audioTrack.enabled = !next.muted;
+      }
+      setMuted(next.muted);
+      applyAudioRoute(next.speakerOn).catch(() => {});
+      refreshOngoingCallActions(callId);
+    });
+  }, [callId]);
+
+  /**
+   * Leaving mid-call used to strand the Convex row in `active` forever: the
+   * swipe-back gesture and the hardware back button never called `endCall`, so the
+   * peer was never told and the call showed as live in history.
+   */
+  useEffect(() => {
+    const unsubscribe = navigation.addListener(
+      'beforeRemove',
+      (event: any) => {
+        if (leavingRef.current) {
+          return;
+        }
+        if (call?.status !== 'ringing' && call?.status !== 'active') {
+          return;
+        }
+        event.preventDefault();
+        Alert.alert('End this call?', 'Leaving will hang up for both of you.', [
+          { text: 'Stay', style: 'cancel' },
+          {
+            text: 'End call',
+            style: 'destructive',
+            onPress: () => hangUpRef.current(),
+          },
+        ]);
+      },
+    );
+    return unsubscribe;
+  }, [navigation, call?.status]);
 
   const toggleMute = useCallback(() => {
+    const next = !muted;
     const audioTrack = localStreamRef.current
       ?.getAudioTracks?.()
       ?.find(() => true);
     if (audioTrack) {
-      audioTrack.enabled = muted;
-      setMuted(value => !value);
+      audioTrack.enabled = !next;
+      setMuted(next);
     }
+    callMediaState.set({ muted: next });
   }, [muted]);
 
   const toggleCamera = useCallback(() => {
@@ -272,7 +503,7 @@ const CallScreen = ({ route, navigation }: any) => {
       ?.find(() => true);
     if (videoTrack) {
       videoTrack.enabled = cameraOff;
-      setCameraOff(value => !value);
+      setCameraOff(!cameraOff);
     }
   }, [cameraOff]);
 
@@ -283,22 +514,17 @@ const CallScreen = ({ route, navigation }: any) => {
     videoTrack?._switchCamera?.();
   }, []);
 
-  const formatElapsed = (seconds: number): string => {
-    const m = Math.floor(seconds / 60)
-      .toString()
-      .padStart(2, '0');
-    const s = (seconds % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  };
-
-  const statusLabel =
-    call?.status === 'active'
+  const statusLabel = notice
+    ? notice
+    : call?.status === 'active'
       ? formatElapsed(elapsed)
       : call?.status === 'ringing'
         ? role === 'caller'
           ? 'Ringing…'
           : 'Connecting…'
-        : 'Call ended';
+        : call
+          ? 'Call ended'
+          : 'Connecting…';
 
   return (
     <View
@@ -327,14 +553,14 @@ const CallScreen = ({ route, navigation }: any) => {
               { backgroundColor: theme.color.extendedPrimary50 },
             ]}
           >
-            <Text style={[styles.audioInitials, { color: theme.color.primary }]}>
-              {peerName
-                .split(/\s+/)
-                .filter(Boolean)
-                .slice(0, 2)
-                .map(part => part[0]?.toUpperCase() ?? '')
-                .join('')}
-            </Text>
+            <UserAvatar
+              entity={call?.peer}
+              name={peerName}
+              size={140}
+              variant="text"
+              labelStyle={styles.audioInitials}
+              labelColor={theme.color.primary}
+            />
           </View>
         </View>
       )}
@@ -428,15 +654,22 @@ const CallScreen = ({ route, navigation }: any) => {
 
           <TouchableOpacity
             style={[styles.controlButton, { backgroundColor: '#E5484D' }]}
-            onPress={hangUp}
+            onPress={() => hangUp()}
           >
             <MaterialDesignIcons name="phone-hangup" size={26} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
-        {!pcReady && (
+        {!pcReady && !setupError && (
           <View style={styles.loading}>
             <ActivityIndicator color={theme.color.primary} />
+          </View>
+        )}
+        {setupError && (
+          <View style={styles.setupError}>
+            <Text style={[styles.setupErrorText, { color: theme.color.textPrimary }]}>
+              {setupError}
+            </Text>
           </View>
         )}
       </SafeAreaView>
@@ -490,6 +723,10 @@ const styles = StyleSheet.create({
   statusActive: {
     fontSize: 17,
   },
+  hint: {
+    fontSize: 14,
+    marginTop: 6,
+  },
   localPreview: {
     position: 'absolute',
     right: 16,
@@ -522,5 +759,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 120,
     alignSelf: 'center',
+  },
+  setupError: {
+    position: 'absolute',
+    bottom: 120,
+    left: 24,
+    right: 24,
+    alignItems: 'center',
+  },
+  setupErrorText: {
+    fontSize: 14,
+    textAlign: 'center',
   },
 });

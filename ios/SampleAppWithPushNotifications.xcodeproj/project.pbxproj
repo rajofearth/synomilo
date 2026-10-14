@@ -23,6 +23,7 @@
 		37317A45E6A968E4889FF12D /* Pods_SampleAppWithPushNotifications.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_SampleAppWithPushNotifications.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		3D3E5A032D636D7600A031B0 /* CometChat React native.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "CometChat React native.png"; sourceTree = "<group>"; };
 		3D70A9A22D5F35DD00A635C8 /* SampleAppWithPushNotifications.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = SampleAppWithPushNotifications.entitlements; path = SampleAppWithPushNotifications/SampleAppWithPushNotifications.entitlements; sourceTree = "<group>"; };
+		3D70A9A32D5F35DD00A635C8 /* SampleAppWithPushNotificationsRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = SampleAppWithPushNotificationsRelease.entitlements; path = SampleAppWithPushNotifications/SampleAppWithPushNotificationsRelease.entitlements; sourceTree = "<group>"; };
 		6D482708643121969477F40B /* Pods-SampleAppWithPushNotifications.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SampleAppWithPushNotifications.debug.xcconfig"; path = "Target Support Files/Pods-SampleAppWithPushNotifications/Pods-SampleAppWithPushNotifications.debug.xcconfig"; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = SampleAppWithPushNotifications/AppDelegate.swift; sourceTree = "<group>"; };
 		7D0B947E5C322704C4BC0F21 /* Pods-SampleAppWithPushNotifications.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SampleAppWithPushNotifications.release.xcconfig"; path = "Target Support Files/Pods-SampleAppWithPushNotifications/Pods-SampleAppWithPushNotifications.release.xcconfig"; sourceTree = "<group>"; };
@@ -47,6 +48,7 @@
 			children = (
 				3D3E5A032D636D7600A031B0 /* CometChat React native.png */,
 				3D70A9A22D5F35DD00A635C8 /* SampleAppWithPushNotifications.entitlements */,
+				3D70A9A32D5F35DD00A635C8 /* SampleAppWithPushNotificationsRelease.entitlements */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -278,6 +280,7 @@
 			baseConfigurationReference = 6D482708643121969477F40B /* Pods-SampleAppWithPushNotifications.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = development;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = SampleAppWithPushNotifications/SampleAppWithPushNotifications.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
@@ -309,8 +312,9 @@
 			baseConfigurationReference = 7D0B947E5C322704C4BC0F21 /* Pods-SampleAppWithPushNotifications.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = production;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = SampleAppWithPushNotifications/SampleAppWithPushNotifications.entitlements;
+				CODE_SIGN_ENTITLEMENTS = SampleAppWithPushNotifications/SampleAppWithPushNotificationsRelease.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = T9F7QDSC2S;
 				INFOPLIST_FILE = SampleAppWithPushNotifications/Info.plist;

@@ -1,43 +1,35 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Image,
   Linking,
+  Pressable,
   ScrollView,
   StyleSheet,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMutation, useQuery } from 'convex/react';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import DeviceInfo from 'react-native-device-info';
 import { launchImageLibrary } from 'react-native-image-picker';
 import {
   ActivityIndicator,
-  Appbar,
-  Avatar,
   Button,
   Dialog,
-  Divider,
-  List,
+  HelperText,
   Portal,
   Snackbar,
   Text,
   TextInput,
-  useTheme as usePaperTheme,
+  useTheme,
 } from 'react-native-paper';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from './UserAvatar';
 
-const initialsFor = (name: string): string =>
-  name
-    .trim()
-    .split(/\s+/)
-    .map(part => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase() || '?';
+const GITHUB_URL = 'https://github.com/rajofearth';
+const SOURCE_URL = 'https://github.com/rajofearth/synomilo';
+const EMAIL_URL = 'mailto:rajofearth@proton.me';
 
 const uriToBlob = (uri: string): Promise<Blob> =>
   new Promise((resolve, reject) => {
@@ -49,8 +41,16 @@ const uriToBlob = (uri: string): Promise<Blob> =>
     xhr.send();
   });
 
+/**
+ * A tab root, so there is no back arrow.
+ *
+ * Profile used to be a stack screen pushed from the Chats header avatar, which meant it
+ * rendered an `Appbar.BackAction` that went nowhere once it became a tab. The header is
+ * now a plain title row with the single contextual action (edit), and the identity block
+ * that used to be repeated as an "Account" list is the hero instead.
+ */
 const ProfileScreen = ({ navigation }: any) => {
-  const { colors } = usePaperTheme();
+  const { colors } = useTheme();
   const { user, token, signOut } = useSession();
   const updateProfile = useMutation(api.users.updateProfile);
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -87,8 +87,6 @@ const ProfileScreen = ({ navigation }: any) => {
 
   const displayName = user?.displayName ?? 'Unknown';
   const username = user?.username ?? 'unknown';
-  const initials = initialsFor(displayName);
-  const avatarUri = avatarDraft ?? user?.avatarUrl ?? null;
   const versionLabel = `${DeviceInfo.getVersion()} (${DeviceInfo.getBuildNumber()})`;
   const platformLabel = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
 
@@ -176,58 +174,100 @@ const ProfileScreen = ({ navigation }: any) => {
     signOut().catch(() => {});
   }, [signOut]);
 
+  /**
+   * One row, one value. Every list in this screen is built from these instead of a
+   * `List.Item` per row, because `List.Item` renders its own dividers and its own
+   * vertical rhythm and the four sections below it did not line up with each other.
+   */
+  const rows: {
+    label: string;
+    value?: string;
+    icon?: string;
+    onPress?: () => void;
+  }[] = [
+    { label: 'Display name', value: displayName },
+    { label: 'Username', value: `@${username}` },
+  ];
+
+  const appRows = [
+    { label: 'Version', value: versionLabel, icon: 'information-outline' },
+    { label: 'Platform', value: platformLabel, icon: 'cellphone' },
+  ];
+
+  const linkRows = [
+    { label: 'GitHub', icon: 'github', onPress: () => openLink(GITHUB_URL) },
+    { label: 'Source code', icon: 'source-repository', onPress: () => openLink(SOURCE_URL) },
+    { label: 'Email', icon: 'email-outline', onPress: () => openLink(EMAIL_URL) },
+  ];
+
+  const card = {
+    backgroundColor: colors.elevation.level1,
+    borderRadius: 20,
+  };
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Appbar.Header centered={false} style={{ backgroundColor: colors.surface }}>
-        <Appbar.BackAction
-          onPress={() => navigation.goBack()}
-          color={colors.onSurface}
-        />
-        <Appbar.Content
-          title="Profile"
-          titleStyle={{ color: colors.onSurface }}
-        />
-        <Appbar.Action
-          icon={({ size }) => (
-            <MaterialDesignIcons
-              name={editing ? 'check' : 'pencil-outline'}
-              size={size}
-              color={editing ? colors.primary : colors.onSurfaceVariant}
-            />
-          )}
-          onPress={editing ? handleSave : openEdit}
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      edges={['top']}
+    >
+      <View style={styles.header}>
+        <Text variant="headlineMedium" style={styles.headerTitle}>
+          Profile
+        </Text>
+        <Pressable
+          style={({ pressed }) => [
+            styles.headerAction,
+            {
+              backgroundColor: editing ? colors.primary : colors.surfaceVariant,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={editing ? 'Save profile' : 'Edit profile'}
           disabled={editing && (saving || uploadingAvatar)}
-        />
-      </Appbar.Header>
+          onPress={editing ? handleSave : openEdit}
+        >
+          <MaterialDesignIcons
+            name={editing ? 'check' : 'pencil-outline'}
+            size={20}
+            color={editing ? colors.onPrimary : colors.onSurfaceVariant}
+          />
+        </Pressable>
+      </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
-          <View style={styles.avatarWrap}>
-            {avatarUri ? (
-              <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
-            ) : (
-              <Avatar.Text
-                size={88}
-                label={initials}
-                style={{ backgroundColor: colors.primaryContainer }}
-                color={colors.onPrimaryContainer}
-              />
-            )}
-            {editing && (
-              <TouchableOpacity
+          <Pressable
+            onPress={editing ? pickAvatar : undefined}
+            disabled={!editing || uploadingAvatar}
+            accessibilityRole={editing ? 'button' : undefined}
+            accessibilityLabel={editing ? 'Change profile photo' : undefined}
+          >
+            <UserAvatar
+              entity={user}
+              name={displayName}
+              override={avatarDraft}
+              size={96}
+              variant="paper"
+              initialsStyle={{
+                backgroundColor: colors.primaryContainer,
+                borderRadius: 48,
+              }}
+              labelColor={colors.onPrimaryContainer}
+              labelStyle={styles.heroInitials}
+            />
+            {editing ? (
+              <View
                 style={[
                   styles.cameraBadge,
                   {
                     backgroundColor: colors.primary,
-                    borderColor: colors.surface,
+                    borderColor: colors.background,
                   },
                 ]}
-                onPress={pickAvatar}
-                disabled={uploadingAvatar}
-                activeOpacity={0.8}
               >
                 {uploadingAvatar ? (
                   <ActivityIndicator size={14} color={colors.onPrimary} />
@@ -238,31 +278,31 @@ const ProfileScreen = ({ navigation }: any) => {
                     color={colors.onPrimary}
                   />
                 )}
-              </TouchableOpacity>
-            )}
-          </View>
-          <Text
-            variant="headlineSmall"
-            style={[styles.name, { color: colors.onSurface }]}
-          >
-            {displayName}
+              </View>
+            ) : null}
+          </Pressable>
+          <Text variant="headlineSmall" style={styles.heroName}>
+            {editing ? displayNameDraft || displayName : displayName}
           </Text>
           <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
-            @{username}
+            @{editing ? usernameDraft || username : username}
           </Text>
         </View>
 
         {editing ? (
-          <View style={styles.editForm}>
+          <View style={[styles.card, card, styles.editCard]}>
+            <Text variant="labelLarge" style={styles.sectionLabel}>
+              EDIT DETAILS
+            </Text>
             <TextInput
               mode="outlined"
               label="Display name"
               value={displayNameDraft}
               onChangeText={setDisplayNameDraft}
-              style={[styles.input, { backgroundColor: colors.background }]}
+              style={styles.input}
               outlineStyle={styles.inputOutline}
-              outlineColor={colors.outline}
-              activeOutlineColor={colors.primary}
+              outlineColor={colors.outlineVariant}
+              activeOutlineColor={colors.onSurface}
             />
             <TextInput
               mode="outlined"
@@ -271,17 +311,18 @@ const ProfileScreen = ({ navigation }: any) => {
               onChangeText={setUsernameDraft}
               autoCapitalize="none"
               autoCorrect={false}
-              helperText="3-20 characters: a-z, 0-9, _"
-              style={[styles.input, { backgroundColor: colors.background }]}
+              style={styles.input}
               outlineStyle={styles.inputOutline}
-              outlineColor={colors.outline}
-              activeOutlineColor={colors.primary}
+              outlineColor={colors.outlineVariant}
+              activeOutlineColor={colors.onSurface}
             />
+            <HelperText type="info" padding="none" visible>
+              Username: 3 to 20 characters, a-z, 0-9 and _.
+            </HelperText>
             <View style={styles.editActions}>
               <Button
                 mode="text"
                 textColor={colors.onSurfaceVariant}
-                style={styles.actionButton}
                 disabled={saving}
                 onPress={cancelEdit}
               >
@@ -289,11 +330,12 @@ const ProfileScreen = ({ navigation }: any) => {
               </Button>
               <Button
                 mode="contained"
-                style={styles.actionButton}
+                style={styles.saveButton}
                 contentStyle={styles.pillContent}
                 loading={saving}
-                disabled={saving || !token}
+                disabled={saving || uploadingAvatar || !token}
                 onPress={handleSave}
+                labelStyle={{ color: colors.onPrimary }}
               >
                 Save
               </Button>
@@ -301,211 +343,157 @@ const ProfileScreen = ({ navigation }: any) => {
           </View>
         ) : (
           <>
-            <List.Section
-              title="Account"
-              titleStyle={{ color: colors.onSurfaceVariant }}
-            >
-              <List.Item
-                title="Username"
-                titleStyle={{ color: colors.onSurface }}
-                right={() => (
-                  <Text variant="bodyMedium" style={styles.value}>
-                    @{username}
+            <View style={[styles.card, card]}>
+              <Text variant="labelLarge" style={styles.sectionLabel}>
+                ACCOUNT
+              </Text>
+              {rows.map((row, index) => (
+                <View
+                  key={row.label}
+                  style={[
+                    styles.row,
+                    index > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.outlineVariant,
+                    },
+                  ]}
+                >
+                  <Text
+                    variant="bodyLarge"
+                    style={[styles.rowLabel, { color: colors.onSurface }]}
+                  >
+                    {row.label}
                   </Text>
-                )}
-              />
-              <Divider style={{ backgroundColor: colors.outlineVariant }} />
-              <List.Item
-                title="Display name"
-                titleStyle={{ color: colors.onSurface }}
-                right={() => (
-                  <Text variant="bodyMedium" style={styles.value}>
-                    {displayName}
+                  <Text
+                    variant="bodyLarge"
+                    numberOfLines={1}
+                    style={[styles.rowValue, { color: colors.onSurfaceVariant }]}
+                  >
+                    {row.value}
                   </Text>
-                )}
-              />
-            </List.Section>
-
-            <List.Section
-              title="About"
-              titleStyle={{ color: colors.onSurfaceVariant }}
-            >
-              <List.Item
-                title="Version"
-                titleStyle={{ color: colors.onSurface }}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="information-outline"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                right={() => (
-                  <Text variant="bodyMedium" style={styles.value}>
-                    {versionLabel}
-                  </Text>
-                )}
-              />
-              <Divider style={{ backgroundColor: colors.outlineVariant }} />
-              <List.Item
-                title="Platform"
-                titleStyle={{ color: colors.onSurface }}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="android"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                right={() => (
-                  <Text variant="bodyMedium" style={styles.value}>
-                    {platformLabel}
-                  </Text>
-                )}
-              />
-              <Divider style={{ backgroundColor: colors.outlineVariant }} />
-              <List.Item
-                title="Signed in as"
-                titleStyle={{ color: colors.onSurface }}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="account-outline"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                right={() => (
-                  <Text variant="bodyMedium" style={styles.value}>
-                    @{username}
-                  </Text>
-                )}
-              />
-            </List.Section>
-
-            <List.Section
-              title="Links"
-              titleStyle={{ color: colors.onSurfaceVariant }}
-            >
-              <List.Item
-                title="GitHub"
-                titleStyle={{ color: colors.onSurface }}
-                style={[
-                  styles.linkItem,
-                  { backgroundColor: colors.elevation.level1 },
-                ]}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="github"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                right={({ style }) => (
-                  <MaterialDesignIcons
-                    name="chevron-right"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                onPress={() => openLink('https://github.com/rajofearth')}
-              />
-              <List.Item
-                title="Source code"
-                titleStyle={{ color: colors.onSurface }}
-                style={[
-                  styles.linkItem,
-                  { backgroundColor: colors.elevation.level1 },
-                ]}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="source-repository"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                right={({ style }) => (
-                  <MaterialDesignIcons
-                    name="chevron-right"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                onPress={() =>
-                  openLink('https://github.com/rajofearth/synomilo')
-                }
-              />
-              <List.Item
-                title="Email"
-                titleStyle={{ color: colors.onSurface }}
-                style={[
-                  styles.linkItem,
-                  { backgroundColor: colors.elevation.level1 },
-                ]}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="email-outline"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                right={({ style }) => (
-                  <MaterialDesignIcons
-                    name="chevron-right"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                onPress={() => openLink('mailto:rajofearth@proton.me')}
-              />
-            </List.Section>
-
-            <List.Section
-              title="Preferences"
-              titleStyle={{ color: colors.onSurfaceVariant }}
-            >
-              <List.Item
-                title="Settings"
-                titleStyle={{ color: colors.onSurface }}
-                left={({ style }) => (
-                  <MaterialDesignIcons
-                    name="cog-outline"
-                    size={24}
-                    style={style}
-                    color={colors.onSurfaceVariant}
-                  />
-                )}
-                onPress={() => navigation.navigate('Settings')}
-              />
-            </List.Section>
-
-            <View style={styles.footer}>
-              <Button
-                mode="contained"
-                buttonColor={colors.errorContainer}
-                textColor={colors.onErrorContainer}
-                icon={({ size }) => (
-                  <MaterialDesignIcons
-                    name="logout"
-                    size={size}
-                    color={colors.onErrorContainer}
-                  />
-                )}
-                style={styles.signOutButton}
-                contentStyle={styles.pillContent}
-                onPress={() => setSignOutVisible(true)}
+                </View>
+              ))}
+              <Text
+                variant="bodySmall"
+                style={[styles.cardCaption, { color: colors.onSurfaceVariant }]}
               >
-                Sign out
-              </Button>
+                Signed in as @{username}
+              </Text>
             </View>
+
+            <View style={[styles.card, card]}>
+              <Text variant="labelLarge" style={styles.sectionLabel}>
+                APP
+              </Text>
+              {appRows.map((row, index) => (
+                <View
+                  key={row.label}
+                  style={[
+                    styles.row,
+                    index > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.outlineVariant,
+                    },
+                  ]}
+                >
+                  <MaterialDesignIcons
+                    name={row.icon as never}
+                    size={20}
+                    color={colors.onSurfaceVariant}
+                  />
+                  <Text
+                    variant="bodyLarge"
+                    style={[styles.rowLabel, { color: colors.onSurface }]}
+                  >
+                    {row.label}
+                  </Text>
+                  <Text
+                    variant="bodyLarge"
+                    numberOfLines={1}
+                    style={[styles.rowValue, { color: colors.onSurfaceVariant }]}
+                  >
+                    {row.value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={[styles.card, card]}>
+              <Text variant="labelLarge" style={styles.sectionLabel}>
+                LINKS
+              </Text>
+              {linkRows.map((row, index) => (
+                <Pressable
+                  key={row.label}
+                  style={({ pressed }) => [
+                    styles.row,
+                    index > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.outlineVariant,
+                    },
+                    pressed && { opacity: 0.6 },
+                  ]}
+                  onPress={row.onPress}
+                >
+                  <MaterialDesignIcons
+                    name={row.icon as never}
+                    size={20}
+                    color={colors.onSurfaceVariant}
+                  />
+                  <Text
+                    variant="bodyLarge"
+                    style={[styles.rowLabel, { color: colors.onSurface }]}
+                  >
+                    {row.label}
+                  </Text>
+                  <MaterialDesignIcons
+                    name="chevron-right"
+                    size={20}
+                    color={colors.outline}
+                  />
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={[styles.card, card]}>
+              <Text variant="labelLarge" style={styles.sectionLabel}>
+                PREFERENCES
+              </Text>
+              <Pressable
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+                onPress={() => navigation.navigate('Settings')}
+              >
+                <MaterialDesignIcons
+                  name="cog-outline"
+                  size={20}
+                  color={colors.onSurfaceVariant}
+                />
+                <Text
+                  variant="bodyLarge"
+                  style={[styles.rowLabel, { color: colors.onSurface }]}
+                >
+                  Settings
+                </Text>
+                <MaterialDesignIcons
+                  name="chevron-right"
+                  size={20}
+                  color={colors.outline}
+                />
+              </Pressable>
+            </View>
+
+            <Button
+              mode="outlined"
+              icon={({ size, color }) => (
+                <MaterialDesignIcons name="logout" size={size} color={color} />
+              )}
+              style={styles.signOutButton}
+              contentStyle={styles.pillContent}
+              textColor={colors.onSurface}
+              onPress={() => setSignOutVisible(true)}
+            >
+              Sign out
+            </Button>
           </>
         )}
       </ScrollView>
@@ -514,13 +502,13 @@ const ProfileScreen = ({ navigation }: any) => {
         <Dialog
           visible={signOutVisible}
           onDismiss={() => setSignOutVisible(false)}
-          style={[styles.dialog, { backgroundColor: colors.elevation.level3 }]}
+          style={{ backgroundColor: colors.elevation.level3 }}
         >
           <Dialog.Title style={{ color: colors.onSurface }}>
             Sign out
           </Dialog.Title>
           <Dialog.Content>
-            <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
+            <Text style={{ color: colors.onSurfaceVariant }}>
               Are you sure you want to sign out?
             </Text>
           </Dialog.Content>
@@ -531,7 +519,7 @@ const ProfileScreen = ({ navigation }: any) => {
             >
               Cancel
             </Button>
-            <Button textColor={colors.error} onPress={handleSignOut}>
+            <Button textColor={colors.onSurface} onPress={handleSignOut}>
               Sign out
             </Button>
           </Dialog.Actions>
@@ -545,7 +533,7 @@ const ProfileScreen = ({ navigation }: any) => {
       >
         {snackbar ?? ''}
       </Snackbar>
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -555,77 +543,103 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  headerTitle: {
+    flex: 1,
+  },
+  headerAction: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   content: {
-    flexGrow: 1,
-    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+    gap: 12,
   },
   hero: {
     alignItems: 'center',
-    paddingTop: 24,
-    paddingBottom: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  avatarWrap: {
-    position: 'relative',
+  heroInitials: {
+    fontSize: 32,
+    fontWeight: '700',
   },
-  avatarImage: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+  heroName: {
+    marginTop: 16,
+    marginBottom: 4,
   },
   cameraBadge: {
     position: 'absolute',
-    right: -2,
-    bottom: -2,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    right: 0,
+    bottom: 0,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  name: {
-    marginTop: 16,
-    marginBottom: 4,
-  },
-  value: {
-    alignSelf: 'center',
-  },
-  linkItem: {
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderRadius: 20,
-  },
-  editForm: {
+  card: {
+    paddingVertical: 6,
     paddingHorizontal: 16,
   },
+  editCard: {
+    paddingVertical: 14,
+  },
+  sectionLabel: {
+    paddingTop: 12,
+    paddingBottom: 4,
+    opacity: 0.6,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+  },
+  rowLabel: {
+    flex: 1,
+  },
+  rowValue: {
+    flexShrink: 1,
+  },
+  cardCaption: {
+    paddingTop: 10,
+    paddingBottom: 12,
+    opacity: 0.7,
+  },
   input: {
-    borderRadius: 16,
+    marginTop: 8,
+    backgroundColor: 'transparent',
   },
   inputOutline: {
-    borderRadius: 16,
+    borderRadius: 14,
   },
   editActions: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 8,
-    marginTop: 8,
+    marginTop: 4,
   },
-  actionButton: {
-    borderRadius: 28,
-  },
-  footer: {
-    marginTop: 'auto',
-    padding: 16,
-  },
-  signOutButton: {
-    width: '100%',
-    borderRadius: 28,
+  saveButton: {
+    borderRadius: 24,
   },
   pillContent: {
     paddingVertical: 6,
   },
-  dialog: {
-    borderRadius: 28,
+  signOutButton: {
+    marginTop: 4,
+    borderRadius: 24,
   },
 });

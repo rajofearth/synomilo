@@ -17,6 +17,7 @@ import dayjs from 'dayjs';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from '../convex/UserAvatar';
 
 type CallStatus = 'ringing' | 'active' | 'rejected' | 'missed' | 'ended';
 
@@ -38,14 +39,6 @@ const formatTime = (ts: number): string => {
   const d = dayjs(ts);
   return d.isSame(dayjs(), 'day') ? d.format('h:mm A') : d.format('MMM D');
 };
-
-const initialsFor = (name: string): string =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase() ?? '')
-    .join('');
 
 const isMissed = (status: CallStatus): boolean =>
   status === 'missed' || status === 'rejected';
@@ -126,14 +119,14 @@ const Calls = () => {
               { backgroundColor: theme.colors.primaryContainer },
             ]}
           >
-            <Text
-              style={[
-                styles.avatarText,
-                { color: theme.colors.onPrimaryContainer },
-              ]}
-            >
-              {initialsFor(name) || '?'}
-            </Text>
+            <UserAvatar
+              entity={item.peer}
+              name={name}
+              size={48}
+              variant="text"
+              labelStyle={styles.avatarText}
+              labelColor={theme.colors.onPrimaryContainer}
+            />
           </View>
           <View style={styles.body}>
             <View style={styles.bodyTop}>

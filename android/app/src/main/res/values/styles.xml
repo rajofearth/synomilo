@@ -6,4 +6,26 @@
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     </style>
 
+    <!--
+      Theme for IncomingCallActivity only.
+
+      Deliberately opaque black: a translucent/immersive ring window renders behind
+      the keyguard on several OEM builds, which is the same "blank screen" symptom
+      this activity was written to remove.
+
+      There are deliberately NO showWhenLocked / turnScreenOn items here: those are
+      not theme attributes. They are manifest attributes (android:showWhenLocked /
+      android:turnScreenOn on the activity, which is where they live), the
+      Activity#setShowWhenLocked / setTurnScreenOn calls made from onCreate, and
+      the FLAG_SHOW_WHEN_LOCKED / FLAG_TURN_SCREEN_ON window flags used below API 27.
+    -->
+    <style name="Theme.CallRinging" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+    </style>
+
 </resources>

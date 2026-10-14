@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   StatusBar,
   Keyboard,
+  type ColorValue,
 } from 'react-native';
 import { CometChat } from '@cometchat/chat-sdk-react-native';
 import {
@@ -26,8 +27,9 @@ import {
 } from '@cometchat/chat-uikit-react-native';
 import Check from '../../assets/icons/CheckFill';
 import { sampleData } from '../../utils/helper';
+import { resolveAvatar } from '../../utils/avatar';
 import { SCREEN_CONSTANTS } from '../../utils/AppConstants';
-import { navigate, navigationRef } from '../../navigation/NavigationService';
+import { navigationRef, resetTo } from '../../navigation/NavigationService';
 import Skeleton from './Skeleton';
 import {
   SafeAreaView,
@@ -37,12 +39,68 @@ import { useHeaderHeight } from '@react-navigation/elements';
 
 type GridItem = CometChat.User | { dummy: true };
 
+/**
+ * Fetch users from a remote sample JSON file, falling back to local sample data.
+ *
+ * Module scope: these never touch component state, and defining them inside the component
+ * is what produced the `exhaustive-deps` violation on the mount effect.
+ */
+async function fetchUsers(): Promise<CometChat.User[]> {
+  try {
+    const response = await fetch(
+      'https://assets.cometchat.io/sampleapp/sampledata.json',
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      const fetchedUsers = data.users || [];
+      return fetchedUsers.map((user: any) => new CometChat.User(user));
+    } else {
+      throw new Error('Failed to load users');
+    }
+  } catch (error) {
+    console.error('Exception while fetching users:', error);
+    return getDefaultUsers();
+  }
+}
+
+function getDefaultUsers(): Promise<CometChat.User[]> {
+  const localUsers = sampleData.users || [];
+  return Promise.resolve(
+    localUsers.map((user: any) => new CometChat.User(user)),
+  );
+}
+
+/**
+ * Returns the appropriate image source for a sample user's avatar, or undefined when the
+ * URL is unusable so `CometChatAvatar` falls back to its own initials.
+ *
+ * The URL check is the canonical one from `src/utils/avatar.ts`.
+ */
+const getAvatarSource = (
+  avatar: string,
+  name: string,
+): ImageSourcePropType | undefined => {
+  const resolved = resolveAvatar({ avatar }, name);
+  return resolved.kind === 'url' ? { uri: resolved.uri } : undefined;
+};
+
+const Loading = ({ color }: { color: ColorValue }) => (
+  <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+    <ActivityIndicator size="small" color={color} />
+  </View>
+);
+
+const TOAST_DURATION_MS = 2800;
+
 const LoginScreen: React.FC = () => {
   const [users, setUsers] = useState<CometChat.User[]>([]);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [userUID, setUserUID] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingUsers, setLoadingUsers] = useState<boolean>(true);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const theme = useTheme();
   const mode = useColorScheme();
@@ -76,18 +134,47 @@ const LoginScreen: React.FC = () => {
     };
   }, []);
 
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
+      setToastMessage(null);
+    }, TOAST_DURATION_MS);
+  }, []);
+
   useEffect(() => {
+    let cancelled = false;
     (async function loadUsers(): Promise<void> {
       try {
         setLoadingUsers(true);
         const fetchedUsers = await fetchUsers();
-        setUsers(fetchedUsers);
+        if (!cancelled) {
+          setUsers(fetchedUsers);
+        }
       } catch (error) {
         console.error(error);
       } finally {
-        setLoadingUsers(false);
+        if (!cancelled) {
+          setLoadingUsers(false);
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSelectUser = (user: CometChat.User): void => {
@@ -95,71 +182,41 @@ const LoginScreen: React.FC = () => {
     setUserUID('');
   };
 
+  /**
+   * Composes a raw CometChat login, NOT a session in this app. Chat, groups, files and
+   * reactions all come from Convex, so this screen signs you into the calls layer only —
+   * `App.tsx` computes `isLoggedIn` from the Convex session, which stays null and every
+   * Convex query will fail.
+   *
+   * `resetTo` alone, not `navigate()` followed by `reset()`: the queued navigate would have
+   * replayed on top of the fresh stack and left a duplicate tab screen behind the back
+   * button. `reset` rejects if the ref is not ready; that is swallowed here on purpose
+   * because the failure surfaces as the screen simply not changing.
+   */
   const handleContinue = async () => {
     if ((!selectedUser && !userUID.trim()) || isLoading) return;
     setIsLoading(true);
     const uid: string = userUID.trim() || selectedUser!;
     try {
       await CometChatUIKit.login({ uid });
-      navigate('BottomTabNavigator');
-      navigationRef.reset({
-        index: 0,
-        routes: [{ name: SCREEN_CONSTANTS.BOTTOM_TAB_NAVIGATOR }],
-      });
+      await resetTo(SCREEN_CONSTANTS.BOTTOM_TAB_NAVIGATOR);
     } catch (error: any) {
-      console.log('Login failed with exception:', error);
+      console.error('Sample user login failed:', error);
+      showToast(
+        'Could not sign in to that sample user. Check your connection and try again.',
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   /**
-   * Fetch users from a remote sample JSON file.
-   * Falls back to local sample data if there's an error.
+   * The skeleton is a "still loading" affordance, not an empty state. Gating it on
+   * `users.length === 0` meant a failed fetch left it on screen forever, because Skeleton
+   * used to return null once its own 3s timer expired while the caller still believed it
+   * was showing.
    */
-  async function fetchUsers(): Promise<CometChat.User[]> {
-    try {
-      const response = await fetch(
-        'https://assets.cometchat.io/sampleapp/sampledata.json',
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const fetchedUsers = data.users || [];
-        return fetchedUsers.map((user: any) => new CometChat.User(user));
-      } else {
-        throw new Error('Failed to load users');
-      }
-    } catch (error) {
-      console.error('Exception while fetching users:', error);
-      return await getDefaultUsers();
-    }
-  }
-
-  /**
-   * Get users from local sample data (used in case the remote fetch fails).
-   */
-  async function getDefaultUsers(): Promise<CometChat.User[]> {
-    const localUsers = sampleData.users || [];
-    return localUsers.map((user: any) => new CometChat.User(user));
-  }
-
-  /**
-   * Returns the appropriate image source object for the avatar.
-   */
-  const getAvatarSource = (
-    avatar: string | ImageSourcePropType,
-  ): ImageSourcePropType => {
-    if (typeof avatar === 'string') {
-      if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
-        return { uri: avatar };
-      }
-    }
-    return avatar as ImageSourcePropType;
-  };
-
-  // Show skeleton if the API is still loading or if no users are available.
-  const showSkeleton = loadingUsers || users.length === 0;
+  const showSkeleton = loadingUsers;
 
   // Compute grid data only if users are available.
   let gridData: GridItem[] = [];
@@ -173,23 +230,6 @@ const LoginScreen: React.FC = () => {
       }
     }
   }
-
-  const Loading = () => {
-    return (
-      <View
-        style={{
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <ActivityIndicator
-          size="small"
-          color={theme.color.staticWhite}
-          style={{ alignSelf: 'center', justifyContent: 'center' }}
-        />
-      </View>
-    );
-  };
 
   return (
     <SafeAreaView
@@ -297,7 +337,7 @@ const LoginScreen: React.FC = () => {
                       )}
                       <CometChatAvatar
                         name={user.getName()}
-                        image={getAvatarSource(user.getAvatar())}
+                        image={getAvatarSource(user.getAvatar(), user.getName())}
                       />
                       {/* Display only the first name */}
                       <Text
@@ -391,7 +431,7 @@ const LoginScreen: React.FC = () => {
             disabled={(!selectedUser && !userUID.trim()) || isLoading}
           >
             {isLoading ? (
-              <Loading />
+              <Loading color={theme.color.staticWhite} />
             ) : (
               <Text
                 style={[
@@ -431,6 +471,13 @@ const LoginScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Inside the KeyboardAvoidingView so the message is not occluded by the keyboard. */}
+        {toastMessage && (
+          <View style={styles.toastContainer}>
+            <Text style={styles.toastText}>{toastMessage}</Text>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -537,6 +584,20 @@ const styles = StyleSheet.create({
   changeCredentialsContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  toastContainer: {
+    position: 'absolute',
+    bottom: '8%',
+    left: 20,
+    right: 20,
+    backgroundColor: '#C73C3E',
+    padding: 8,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 14,
   },
   userGridWrapper: {
     minHeight: 240,

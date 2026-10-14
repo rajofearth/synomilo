@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -22,18 +22,16 @@ import {
   useCometChatTranslation,
   useTheme,
 } from '@cometchat/chat-uikit-react-native';
-import { navigate, navigationRef } from '../../navigation/NavigationService';
+import { navigationRef, resetTo } from '../../navigation/NavigationService';
 import { SCREEN_CONSTANTS } from '../../utils/AppConstants';
 import { CometChat } from '@cometchat/chat-sdk-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
 
-const AppCredentials: React.FC = () => {
-  const [storedAppId, setStoredAppId] = useState<string>('');
-  const [storedAuthKey, setStoredAuthKey] = useState<string>('');
-  const [storedRegion, setStoredRegion] = useState<string>('US');
+const TOAST_DURATION_MS = 2500;
 
+const AppCredentials: React.FC = () => {
   // These are the *editable* states bound to the TextInput fields
   const [appId, setAppId] = useState<string>('');
   const [authKey, setAuthKey] = useState<string>('');
@@ -41,6 +39,7 @@ const AppCredentials: React.FC = () => {
 
   // Toast state for showing error messages
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const theme = useTheme();
   const { t } = useCometChatTranslation();
@@ -83,9 +82,20 @@ const AppCredentials: React.FC = () => {
     authKey.trim().length > 0 &&
     selectedRegion.trim().length > 0;
 
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
   // Load existing credentials if any
   useFocusEffect(
     React.useCallback(() => {
+      let cancelled = false;
       const onBackPress = () => {
         navigationRef.goBack();
         return true; // Prevent default behavior
@@ -98,18 +108,14 @@ const AppCredentials: React.FC = () => {
       async function loadCredentials() {
         try {
           const credentialsStr = await AsyncStorage.getItem('appCredentials');
-          if (credentialsStr) {
-            const credentials = JSON.parse(credentialsStr);
-            // Update 'stored' states
-            setStoredAppId(credentials.appId || '');
-            setStoredAuthKey(credentials.authKey || '');
-            setStoredRegion(credentials.region || 'US');
-
-            // Also set the fields so user sees them pre-populated
-            setAppId(credentials.appId || '');
-            setAuthKey(credentials.authKey || '');
-            setSelectedRegion(credentials.region || 'US');
+          if (!credentialsStr || cancelled) {
+            return;
           }
+          const credentials = JSON.parse(credentialsStr);
+          // Populate the fields so the user sees what is already saved.
+          setAppId(credentials.appId || '');
+          setAuthKey(credentials.authKey || '');
+          setSelectedRegion(credentials.region || 'US');
         } catch (error) {
           console.log('Error loading stored credentials:', error);
         }
@@ -117,16 +123,23 @@ const AppCredentials: React.FC = () => {
 
       loadCredentials();
 
-      return () => backHandler.remove();
+      return () => {
+        cancelled = true;
+        backHandler.remove();
+      };
     }, []),
   );
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToastMessage(message);
-    setTimeout(() => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
       setToastMessage(null);
-    }, 2500);
-  };
+    }, TOAST_DURATION_MS);
+  }, []);
 
   const handleContinue = async (): Promise<void> => {
     // Validate the inputs.
@@ -156,7 +169,8 @@ const AppCredentials: React.FC = () => {
         appId: newAppId,
         authKey: newAuthKey,
       };
-      console.log('Saving credentials:', credentials);
+      // No logging here: an authKey in the console goes straight to logcat / the device
+      // console in plaintext.
       await AsyncStorage.setItem('appCredentials', JSON.stringify(credentials));
 
       // Re-initialize with updated credentials
@@ -167,16 +181,17 @@ const AppCredentials: React.FC = () => {
         subscriptionType: CometChat.AppSettings
           .SUBSCRIPTION_TYPE_ALL_USERS as UIKitSettings['subscriptionType'],
       });
+      showToast('App credentials saved');
     } catch (error) {
       console.error('Failed to save credentials', error);
+      showToast('Could not save those credentials. Check the values and retry.');
+      return;
     }
 
-    // Navigate to the next screen.
-    navigate('BottomTabNavigator');
-    navigationRef.reset({
-      index: 0,
-      routes: [{ name: SCREEN_CONSTANTS.SAMPLE_USER }],
-    });
+    // `resetTo` alone. The previous `navigate('BottomTabNavigator')` queued an intent that
+    // replayed on top of the new stack, and `BottomTabNavigator` is not where this screen
+    // goes next anyway.
+    await resetTo(SCREEN_CONSTANTS.SAMPLE_USER);
   };
 
   return (
@@ -384,6 +399,12 @@ const AppCredentials: React.FC = () => {
                 onChangeText={setAuthKey}
                 placeholder="Enter the Auth Key"
                 placeholderTextColor={theme.color.textTertiary}
+                // An authKey is a bearer credential for the whole CometChat REST API;
+                // rendering it in cleartext on a shared screen is how it ends up in a
+                // screenshot.
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
               />
             </View>
           </ScrollView>

@@ -3,14 +3,12 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useMutation, useQuery } from 'convex/react';
-import { ActivityIndicator, Appbar, Avatar, Button, Divider, List } from 'react-native-paper';
+import { ActivityIndicator, Appbar, Button, Divider, List } from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
-
-const initialsFor = (name: string): string =>
-  name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('');
+import UserAvatar from './UserAvatar';
 
 const ContactInfoScreen = ({ route, navigation }: any) => {
   const theme = useTheme();
@@ -95,7 +93,15 @@ const ContactInfoScreen = ({ route, navigation }: any) => {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
-            <Avatar.Text size={96} label={initialsFor(displayName).toUpperCase()} color={c.textPrimary} style={{ backgroundColor: c.extendedPrimary50 }} />
+            <UserAvatar
+              entity={otherMember}
+              name={displayName}
+              size={96}
+              variant="paper"
+              imageStyle={styles.heroImage}
+              initialsStyle={{ backgroundColor: c.extendedPrimary50 }}
+              labelColor={c.textPrimary as string}
+            />
             <Text style={[theme.typography.heading3.bold, { color: c.textPrimary, marginTop: 16 }]}>{displayName}</Text>
             {!!otherMember?.username && (
               <Text style={[theme.typography.body.medium, { color: c.textSecondary, marginTop: 4 }]}>@{otherMember.username}</Text>
@@ -141,6 +147,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { paddingBottom: 40 },
   hero: { alignItems: 'center', paddingTop: 28, paddingBottom: 24, paddingHorizontal: 16 },
+  heroImage: { width: 96, height: 96, borderRadius: 48 },
   actions: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, marginBottom: 20 },
   callButton: { flex: 1, borderRadius: 24 },
   callButtonContent: { paddingVertical: 6 },

@@ -2,7 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Wired to the Release configuration in project.pbxproj
+	  (CODE_SIGN_ENTITLEMENTS -> this file, APS_ENVIRONMENT = production).
+	  Nothing referenced this file before; both Debug and Release pointed at
+	  SampleAppWithPushNotifications.entitlements.
+	-->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>$(APS_ENVIRONMENT)</string>
 </dict>
 </plist>

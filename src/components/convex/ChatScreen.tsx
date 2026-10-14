@@ -43,6 +43,7 @@ import {
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from './UserAvatar';
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '🙏', '🔥'];
 
@@ -58,7 +59,13 @@ type Message = {
   _id: string;
   conversationId: string;
   senderId: string;
-  sender: { _id: string; displayName: string; username: string };
+  sender: {
+    _id: string;
+    displayName: string;
+    username: string;
+    /** Convex `publicUser()` sends this; the old type stripped it. */
+    avatarUrl: string | null;
+  };
   kind: 'text' | 'image' | 'video' | 'audio' | 'file';
   body: string | null;
   fileName: string | null;
@@ -79,6 +86,14 @@ type Receipt = {
   lastSeenAt: number;
 };
 
+type UploadStatus = 'uploading' | 'sending' | 'failed';
+
+/**
+ * One queued attachment plus its own upload state.
+ *
+ * The list is keyed by `id` and every mutation patches exactly one item, so N
+ * uploads in flight cannot clobber each other's progress or failure.
+ */
 type PendingAttachment = {
   id: string;
   uri: string;
@@ -86,13 +101,109 @@ type PendingAttachment = {
   mimeType: string;
   size: number | null;
   kind: Message['kind'];
+  /** Seconds, only known when the platform picker reported it. */
+  durationSeconds: number | null;
+  status: UploadStatus;
+  /** 0..1 when the transport reported a length, else null (indeterminate). */
+  progress: number | null;
+  error: string | null;
 };
+
+type StagedAttachment = Omit<
+  PendingAttachment,
+  'status' | 'progress' | 'error'
+>;
 
 let pendingSequence = 0;
 
 const nextPendingId = (): string => {
   pendingSequence += 1;
   return `pending-${Date.now()}-${pendingSequence}`;
+};
+
+/**
+ * POST the bytes with real byte-level progress.
+ *
+ * `fetch` gives no upload progress, so the old flow could only say "something
+ * is happening". XHR's `upload.onprogress` does, and it also gives us an
+ * `abort()` handle so removing a chip actually cancels the transfer instead of
+ * letting a "deleted" attachment post itself later.
+ *
+ * `onProgress` is only called when the length is known; otherwise the caller
+ * stays indeterminate (`progress: null`) rather than inventing a fake bar.
+ */
+const postWithProgress = (
+  url: string,
+  mime: string,
+  blob: Blob,
+  onProgress: (fraction: number) => void,
+  register: (xhr: XMLHttpRequest) => void,
+): Promise<{ storageId: string }> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    register(xhr);
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.min(1, event.loaded / event.total));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Upload failed (${xhr.status})`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch {
+        reject(new Error('The server sent an unreadable response.'));
+      }
+    };
+    xhr.onerror = () =>
+      reject(new Error('Could not reach the server. Check your connection.'));
+    xhr.onabort = () => reject(new Error('Upload cancelled'));
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', mime);
+    xhr.send(blob);
+  });
+
+/** `95` -> `1:35`, `3725` -> `1:02:05`. */
+const formatDuration = (seconds: number | null): string => {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
+    return '';
+  }
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
+};
+
+/**
+ * Poster frames: a URL that already failed to decode as an image is remembered
+ * for the process so a scrolling FlatList does not re-request it on every
+ * re-render.
+ */
+const brokenPosterUris = new Set<string>();
+
+/**
+ * Best available still for a video cell, or `null` when we should draw the
+ * themed placeholder instead.
+ *
+ * Convex stores no thumbnail and the SDKs expose no frame extractor here, so
+ * this is the asset URL itself: if the storage object happens to be an image
+ * (a GIF poster, a server-generated thumbnail) the bubble gets a real frame,
+ * and an mp4 that cannot decode as an image degrades to the placeholder.
+ */
+const videoPosterFor = (uri: string): string | null =>
+  brokenPosterUris.has(uri) ? null : uri;
+
+type MediaTokens = {
+  scrim: string;
+  overlay: string;
+  chip: string;
+  errorOverlay: string;
+  onMedia: string;
 };
 
 const formatBytes = (bytes: number | null): string => {
@@ -106,6 +217,87 @@ const formatBytes = (bytes: number | null): string => {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+/**
+ * A video message cell: a still (or a designed placeholder) plus a play
+ * affordance. Deliberately contains NO player.
+ *
+ * The previous cell mounted a paused <Video> per row inside an inverted
+ * FlatList, which meant one ExoPlayer per visible message, a decoder per
+ * scroll, and native views swallowing taps. Playback now happens in the media
+ * viewer, which mounts exactly one player for the whole screen.
+ */
+const VideoAttachmentCell = ({
+  uri,
+  fileName,
+  size,
+  media,
+  onPress,
+}: {
+  uri: string;
+  fileName: string | null;
+  size: number | null;
+  media: MediaTokens;
+  onPress: () => void;
+}) => {
+  // `brokenUri` (not a boolean) so a recycled row pointing at a different URL
+  // gets a fresh attempt instead of inheriting the previous row's failure.
+  const [brokenUri, setBrokenUri] = useState<string | null>(null);
+  const poster = brokenUri === uri ? null : videoPosterFor(uri);
+  const caption = [fileName, formatBytes(size) || null].filter(Boolean).join('  ·  ');
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.videoCard, { backgroundColor: media.scrim }]}
+      accessibilityRole="button"
+      accessibilityLabel={`Play video${fileName ? `, ${fileName}` : ''}`}
+    >
+      {poster ? (
+        <Image
+          source={{ uri: poster }}
+          style={styles.videoPoster}
+          resizeMode="cover"
+          onError={() => {
+            brokenPosterUris.add(uri);
+            setBrokenUri(uri);
+          }}
+        />
+      ) : (
+        <View
+          style={[
+            styles.videoPosterFallback,
+            { backgroundColor: media.errorOverlay },
+          ]}
+        >
+          <MaterialDesignIcons
+            name="movie"
+            size={34}
+            color={media.onMedia}
+          />
+          <Text style={[styles.videoFallbackText, { color: media.onMedia }]}>
+            Video
+          </Text>
+        </View>
+      )}
+      <View style={styles.videoPlayOverlay} pointerEvents="none">
+        <View style={[styles.videoPlayButton, { backgroundColor: media.overlay }]}>
+          <MaterialDesignIcons name="play" size={26} color={media.onMedia} />
+        </View>
+      </View>
+      {!!caption && (
+        <View
+          style={[styles.videoChip, { backgroundColor: media.chip }]}
+          pointerEvents="none"
+        >
+          <Text numberOfLines={1} style={[styles.videoChipText, { color: media.onMedia }]}>
+            {caption}
+          </Text>
+        </View>
+      )}
+    </Pressable>
+  );
 };
 
 const formatDayLabel = (ts: number): string => {
@@ -289,10 +481,79 @@ const ChatScreen = ({ route, navigation }: any) => {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [viewer, setViewer] = useState<{ message: Message } | null>(null);
+  /** 'ready' | 'error' | 'loading' for the ONE player mounted in the viewer. */
+  const [viewerMedia, setViewerMedia] = useState<{
+    status: 'loading' | 'ready' | 'error';
+    nonce: number;
+  }>({ status: 'loading', nonce: 0 });
   const menuScale = useRef(new Animated.Value(0.8)).current;
   const menuOpacity = useRef(new Animated.Value(0)).current;
   const listRef = useRef<FlatList<Message>>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** id -> in-flight XHR, so a chip can be removed *and* aborted. */
+  const uploadsRef = useRef(new Map<string, XMLHttpRequest>());
+  /** ids the user removed; their transfer's result must be ignored. */
+  const cancelledRef = useRef(new Set<string>());
+  /** ids with a `runUpload` promise outstanding; stops double-starts. */
+  const inFlightRef = useRef(new Set<string>());
+  /** Read inside `runUpload` so a re-render never orphans an upload. */
+  const pendingRef = useRef<PendingAttachment[]>([]);
+  const mountedRef = useRef(true);
+  pendingRef.current = pending;
+
+  /**
+   * Every colour this screen draws with, resolved once per theme change.
+   *
+   * Chat chrome comes from the monochrome Paper palette so light/dark both
+   * stay achromatic. Media overlays use the UIKit's `media*` tokens: those are
+   * deliberately dark in BOTH schemes because they sit on top of arbitrary
+   * video pixels, where a light scrim in dark mode would be unreadable.
+   */
+  const ui = useMemo(() => {
+    const c = paperTheme.colors;
+    return {
+      primary: c.primary,
+      onPrimary: c.onPrimary,
+      primaryContainer: c.primaryContainer,
+      onPrimaryContainer: c.onPrimaryContainer,
+      onSecondaryContainer: c.onSecondaryContainer,
+      background: c.background,
+      surface: c.surface,
+      surfaceVariant: c.surfaceVariant,
+      onSurface: c.onSurface,
+      onSurfaceVariant: c.onSurfaceVariant,
+      outline: c.outline,
+      outlineVariant: c.outlineVariant,
+      error: c.error,
+      errorContainer: c.errorContainer,
+      onErrorContainer: c.onErrorContainer,
+      elevation2: c.elevation.level2,
+      elevation3: c.elevation.level3,
+      backdrop: c.backdrop,
+      shadow: c.shadow,
+    };
+  }, [paperTheme.colors]);
+
+  const media = useMemo(
+    () => ({
+      scrim: theme.color.mediaScrim as string,
+      overlay: theme.color.mediaOverlay as string,
+      chip: theme.color.mediaDurationChip as string,
+      errorOverlay: theme.color.mediaErrorOverlay as string,
+      onMedia: theme.color.staticWhite as string,
+    }),
+    [theme.color],
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+      }
+    };
+  }, []);
 
   const messages = useMemo(
     () => [...(thread?.messages ?? [])].reverse(),
@@ -330,14 +591,6 @@ const ChatScreen = ({ route, navigation }: any) => {
       } catch {}
     }
   }, [token, conversationId, messages.length, markRead]);
-
-  useEffect(() => {
-    return () => {
-      if (typingTimerRef.current) {
-        clearTimeout(typingTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (!actionTarget) {
@@ -407,96 +660,191 @@ const ChatScreen = ({ route, navigation }: any) => {
     [token, conversationId, setTyping],
   );
 
-  const removePending = useCallback((id: string) => {
-    setPending(prev => prev.filter(item => item.id !== id));
-  }, []);
+  /** Patch exactly one queued item. Parallel uploads never share a setter. */
+  const patchPending = useCallback(
+    (id: string, patch: Partial<PendingAttachment>) => {
+      setPending(prev =>
+        prev.map(item => (item.id === id ? { ...item, ...patch } : item)),
+      );
+    },
+    [],
+  );
 
-  const uploadAsset = useCallback(
-    async (attachment: PendingAttachment): Promise<boolean> => {
-      if (!token) {
-        return false;
+  /**
+   * Uploads + sends one attachment, tracking its own progress.
+   *
+   * Runs on pick, NOT on send: the composer stays typeable and the list stays
+   * scrollable for the whole transfer, and `onSend` never waits on it.
+   */
+  const runUpload = useCallback(
+    async (item: StagedAttachment) => {
+      const id = item.id;
+      if (!token || cancelledRef.current.has(id) || inFlightRef.current.has(id)) {
+        return;
       }
+      inFlightRef.current.add(id);
+      let lastPaint = 0;
       try {
-        const postUrl = await generateUploadUrl({ token });
-        const blob = await uriToBlob(attachment.uri);
-        const mime = attachment.mimeType || 'application/octet-stream';
-        const response = await fetch(postUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': mime },
-          body: blob,
+        // The item is passed in, NOT read back out of state: `startUploads`
+        // runs in the same tick as the `setPending` that queued it, so state
+        // does not contain it yet.
+        const mime = item.mimeType || 'application/octet-stream';
+        patchPending(id, {
+          status: 'uploading',
+          progress: null,
+          error: null,
         });
-        const { storageId } = await response.json();
+        const postUrl = await generateUploadUrl({ token });
+        const blob = await uriToBlob(item.uri);
+        if (cancelledRef.current.has(id)) {
+          return;
+        }
+        const { storageId } = await postWithProgress(
+          postUrl,
+          mime,
+          blob,
+          fraction => {
+            // Throttle: a 300 KB image fires hundreds of progress events and
+            // each one would re-render the whole pending bar.
+            const now = Date.now();
+            if (now - lastPaint < 150 && fraction < 1) {
+              return;
+            }
+            lastPaint = now;
+            patchPending(id, { progress: fraction });
+          },
+          xhr => {
+            uploadsRef.current.set(id, xhr);
+          },
+        );
+        uploadsRef.current.delete(id);
+        patchPending(id, { status: 'sending', progress: 1 });
         await sendMessage({
           token,
           conversationId: conversationId as any,
-          kind: attachment.kind,
-          storageId,
-          fileName: attachment.name || 'file',
+          kind: item.kind,
+          // Convex storage returns the id as a plain string over the wire.
+          storageId: storageId as any,
+          fileName: item.name || 'file',
           mimeType: mime,
-          size: attachment.size ?? undefined,
+          size: item.size ?? undefined,
         });
-        return true;
+        if (mountedRef.current) {
+          setPending(prev => prev.filter(row => row.id !== id));
+        }
       } catch (error) {
-        Alert.alert(
-          'Upload failed',
-          convexErrorMessage(error, 'Could not upload the file.'),
-        );
-        return false;
+        uploadsRef.current.delete(id);
+        if (cancelledRef.current.has(id) || !mountedRef.current) {
+          return;
+        }
+        // No Alert: a modal would block exactly the conversation the user is
+        // trying to carry on with. The chip turns into an inline retry.
+        patchPending(id, {
+          status: 'failed',
+          progress: null,
+          error: convexErrorMessage(error, 'Could not upload the file.'),
+        });
+      } finally {
+        inFlightRef.current.delete(id);
       }
     },
-    [token, generateUploadUrl, sendMessage, conversationId],
+    [token, generateUploadUrl, sendMessage, conversationId, patchPending],
+  );
+
+  const removePending = useCallback((id: string) => {
+    // Cancel the transfer as well as dropping the row: otherwise removing a
+    // chip mid-upload still posts the bytes and posts a message the user
+    // believes they deleted.
+    cancelledRef.current.add(id);
+    const xhr = uploadsRef.current.get(id);
+    uploadsRef.current.delete(id);
+    try {
+      xhr?.abort();
+    } catch {}
+    setPending(prev => prev.filter(item => item.id !== id));
+  }, []);
+
+  const retryUpload = useCallback(
+    (id: string) => {
+      const item = pendingRef.current.find(row => row.id === id);
+      if (!item) {
+        return;
+      }
+      cancelledRef.current.delete(id);
+      patchPending(id, {
+        status: 'uploading',
+        progress: null,
+        error: null,
+      });
+      runUpload(item);
+    },
+    [patchPending, runUpload],
+  );
+
+  const startUploads = useCallback(
+    (items: StagedAttachment[]) => {
+      items.forEach(item => {
+        cancelledRef.current.delete(item.id);
+        runUpload(item);
+      });
+    },
+    [runUpload],
   );
 
   const onSend = useCallback(async () => {
     const body = text.trim();
-    const queue = pending;
-    if ((!body && queue.length === 0) || !token || sending) {
+    // Text is never gated on an in-flight upload: the attachment posts itself
+    // the moment its bytes land, so a slow 40 MB video must not hold the
+    // composer hostage.
+    if (!body || !token || sending) {
       return;
     }
     if (typingTimerRef.current) {
       clearTimeout(typingTimerRef.current);
     }
+    const replyToId = replyTarget?._id;
     setSending(true);
+    setText('');
+    setReplyTarget(null);
     try {
-      if (body) {
-        const replyToId = replyTarget?._id;
-        setText('');
-        setReplyTarget(null);
-        try {
-          await sendMessage({
-            token,
-            conversationId: conversationId as any,
-            body,
-            replyToId: replyToId as any,
-          });
-        } catch (error) {
-          setText(body);
-          Alert.alert(
-            'Message not sent',
-            convexErrorMessage(error, 'Please try again.'),
-          );
-          return;
-        }
-      }
-      for (const attachment of queue) {
-        const uploaded = await uploadAsset(attachment);
-        if (uploaded) {
-          setPending(prev => prev.filter(item => item.id !== attachment.id));
-        }
-      }
+      await sendMessage({
+        token,
+        conversationId: conversationId as any,
+        body,
+        replyToId: replyToId as any,
+      });
+    } catch (error) {
+      // Put the draft back exactly as it was: a failed send (or an unrelated
+      // failed upload) must never cost the user their words.
+      setText(body);
+      Alert.alert(
+        'Message not sent',
+        convexErrorMessage(error, 'Please try again.'),
+      );
     } finally {
       setSending(false);
     }
-  }, [
-    text,
-    pending,
-    token,
-    sending,
-    sendMessage,
-    conversationId,
-    replyTarget,
-    uploadAsset,
-  ]);
+  }, [text, token, sending, sendMessage, conversationId, replyTarget]);
+
+  const stageAndUpload = useCallback(
+    (items: StagedAttachment[]) => {
+      if (items.length === 0) {
+        return;
+      }
+      setPending(prev => [
+        ...prev,
+        ...items.map(item => ({
+          ...item,
+          status: 'uploading' as UploadStatus,
+          progress: null,
+          error: null,
+        })),
+      ]);
+      // Start now, not on send. The row above is purely a progress readout.
+      startUploads(items);
+    },
+    [startUploads],
+  );
 
   const pickPhoto = useCallback(async () => {
     setAttachOpen(false);
@@ -504,20 +852,20 @@ const ChatScreen = ({ route, navigation }: any) => {
       mediaType: 'photo',
       selectionLimit: 0,
     });
-    const additions: PendingAttachment[] = (result.assets ?? [])
-      .filter(asset => !!asset.uri)
-      .map(asset => ({
-        id: nextPendingId(),
-        uri: asset.uri as string,
-        name: asset.fileName ?? `photo-${Date.now()}.jpg`,
-        mimeType: asset.type ?? 'image/jpeg',
-        size: asset.fileSize ?? null,
-        kind: 'image' as Message['kind'],
-      }));
-    if (additions.length > 0) {
-      setPending(prev => [...prev, ...additions]);
-    }
-  }, []);
+    stageAndUpload(
+      (result.assets ?? [])
+        .filter(asset => !!asset.uri)
+        .map(asset => ({
+          id: nextPendingId(),
+          uri: asset.uri as string,
+          name: asset.fileName ?? `photo-${Date.now()}.jpg`,
+          mimeType: asset.type ?? 'image/jpeg',
+          size: asset.fileSize ?? null,
+          kind: 'image' as Message['kind'],
+          durationSeconds: null,
+        })),
+    );
+  }, [stageAndUpload]);
 
   const pickVideo = useCallback(async () => {
     setAttachOpen(false);
@@ -525,20 +873,21 @@ const ChatScreen = ({ route, navigation }: any) => {
       mediaType: 'video',
       selectionLimit: 0,
     });
-    const additions: PendingAttachment[] = (result.assets ?? [])
-      .filter(asset => !!asset.uri)
-      .map(asset => ({
-        id: nextPendingId(),
-        uri: asset.uri as string,
-        name: asset.fileName ?? `video-${Date.now()}.mp4`,
-        mimeType: asset.type ?? 'video/mp4',
-        size: asset.fileSize ?? null,
-        kind: 'video' as Message['kind'],
-      }));
-    if (additions.length > 0) {
-      setPending(prev => [...prev, ...additions]);
-    }
-  }, []);
+    stageAndUpload(
+      (result.assets ?? [])
+        .filter(asset => !!asset.uri)
+        .map(asset => ({
+          id: nextPendingId(),
+          uri: asset.uri as string,
+          name: asset.fileName ?? `video-${Date.now()}.mp4`,
+          mimeType: asset.type ?? 'video/mp4',
+          size: asset.fileSize ?? null,
+          kind: 'video' as Message['kind'],
+          durationSeconds:
+            typeof asset.duration === 'number' ? asset.duration : null,
+        })),
+    );
+  }, [stageAndUpload]);
 
   const pickDocument = useCallback(async () => {
     setAttachOpen(false);
@@ -550,7 +899,7 @@ const ChatScreen = ({ route, navigation }: any) => {
       if (files.length === 0) {
         return;
       }
-      const additions: PendingAttachment[] = [];
+      const additions: StagedAttachment[] = [];
       for (const file of files) {
         if (!file.uri) {
           continue;
@@ -581,11 +930,10 @@ const ChatScreen = ({ route, navigation }: any) => {
           mimeType: mime,
           size: file.size ?? null,
           kind,
+          durationSeconds: null,
         });
       }
-      if (additions.length > 0) {
-        setPending(prev => [...prev, ...additions]);
-      }
+      stageAndUpload(additions);
     } catch (error) {
       if (
         isErrorWithCode(error) &&
@@ -598,7 +946,7 @@ const ChatScreen = ({ route, navigation }: any) => {
         convexErrorMessage(error, 'Please try again.'),
       );
     }
-  }, []);
+  }, [stageAndUpload]);
 
   const applyReaction = useCallback(
     async (message: Message, emoji: string) => {
@@ -743,7 +1091,20 @@ const ChatScreen = ({ route, navigation }: any) => {
   );
 
   const openViewer = useCallback((message: Message) => {
+    // Fresh media state per item: a failed player must not follow the user to
+    // the next photo, and a new item must not inherit a stale error.
+    setViewerMedia({ status: 'loading', nonce: Date.now() });
     setViewer({ message });
+  }, []);
+
+  const closeViewer = useCallback(() => {
+    // Dropping `viewer` unmounts the <Video>; there is exactly one player in
+    // this tree and it lives only inside the viewer.
+    setViewer(null);
+  }, []);
+
+  const reloadViewerMedia = useCallback(() => {
+    setViewerMedia({ status: 'loading', nonce: Date.now() });
   }, []);
 
   const forwardFromViewer = useCallback(() => {
@@ -765,7 +1126,22 @@ const ChatScreen = ({ route, navigation }: any) => {
       const deleted = !!item.deletedAt;
       const isHighlighted = highlightId === item._id;
       const tick = mine && !deleted ? tickFor(item) : null;
-      const timeColor = mine ? '#E9E4FF' : theme.color.textSecondary;
+
+      // Outgoing is a FILLED container, so its text must be the container's
+      // own `on*` colour - never a literal. `primaryContainer` /
+      // `onPrimaryContainer` is the pair that survives both schemes
+      // (~13.9:1 in light, ~9.2:1 in dark). The old `primary` + hardcoded
+      // white pairing rendered white-on-near-white the moment dark mode
+      // flipped `primary` to a near-white value.
+      const bubbleBg = mine ? ui.primaryContainer : ui.surfaceVariant;
+      const bubbleText = mine ? ui.onPrimaryContainer : ui.onSurface;
+      const bubbleMuted = mine ? ui.onSecondaryContainer : ui.onSurfaceVariant;
+      const timeColor = bubbleMuted;
+      // Read is distinguished by SHAPE + WEIGHT, never hue: the app is
+      // achromatic, and a cyan tick was unreadable on a light bubble.
+      const tickIcon = tick === 'sent' ? 'check' : 'check-all';
+      const tickSize = tick === 'read' ? 16 : 14;
+      const tickColor = tick === 'read' ? bubbleText : bubbleMuted;
 
       return (
         <View>
@@ -776,8 +1152,8 @@ const ChatScreen = ({ route, navigation }: any) => {
                   theme.typography.caption1.medium,
                   styles.daySeparator,
                   {
-                    color: theme.color.textSecondary,
-                    backgroundColor: theme.color.background3,
+                    color: ui.onSurfaceVariant,
+                    backgroundColor: ui.surfaceVariant,
                   },
                 ]}
               >
@@ -803,39 +1179,51 @@ const ChatScreen = ({ route, navigation }: any) => {
               delayLongPress={280}
               style={[
                 styles.bubble,
-                mine
-                  ? { backgroundColor: theme.color.primary }
-                  : { backgroundColor: theme.color.background3 },
+                { backgroundColor: bubbleBg },
                 isHighlighted && {
                   borderWidth: 2,
-                  borderColor: theme.color.extendedPrimary50,
+                  borderColor: ui.outline,
                 },
               ]}
             >
               {!mine && isGroup && !deleted && (
-                <Text
-                  style={[
-                    theme.typography.caption1.medium,
-                    styles.senderName,
-                    { color: theme.color.primary },
-                  ]}
-                >
-                  {item.sender.displayName}
-                </Text>
+                <View style={styles.senderRow}>
+                  <UserAvatar
+                    entity={item.sender}
+                    name={item.sender.displayName}
+                    size={20}
+                    variant="text"
+                    containerStyle={[
+                      styles.senderAvatar,
+                      { backgroundColor: ui.primaryContainer },
+                    ]}
+                    labelStyle={styles.senderInitials}
+                    labelColor={ui.primary}
+                  />
+                  <Text
+                    style={[
+                      theme.typography.caption1.medium,
+                      styles.senderName,
+                      { color: ui.primary },
+                    ]}
+                  >
+                    {item.sender.displayName}
+                  </Text>
+                </View>
               )}
               {!!item.forwardedFrom && !deleted && (
                 <View style={styles.forwardedRow}>
                   <MaterialDesignIcons
                     name="share"
                     size={12}
-                    color={mine ? '#E9E4FF' : theme.color.textSecondary}
+                    color={bubbleMuted}
                   />
                   <Text
                     style={[
                       theme.typography.caption2?.regular ??
                         theme.typography.caption1.regular,
                       styles.forwardedText,
-                      { color: mine ? '#E9E4FF' : theme.color.textSecondary },
+                      { color: bubbleMuted },
                     ]}
                   >
                     Forwarded from {item.forwardedFrom}
@@ -844,16 +1232,12 @@ const ChatScreen = ({ route, navigation }: any) => {
               )}
               {deleted ? (
                 <View style={styles.deletedRow}>
-                  <MaterialDesignIcons
-                    name="cancel"
-                    size={14}
-                    color={mine ? '#E9E4FF' : theme.color.textSecondary}
-                  />
+                  <MaterialDesignIcons name="cancel" size={14} color={bubbleMuted} />
                   <Text
                     style={[
                       theme.typography.body.regular,
                       styles.deletedText,
-                      { color: mine ? '#E9E4FF' : theme.color.textSecondary },
+                      { color: bubbleMuted },
                     ]}
                   >
                     {mine ? 'You deleted this message' : 'This message was deleted'}
@@ -867,10 +1251,10 @@ const ChatScreen = ({ route, navigation }: any) => {
                       style={[
                         styles.quoteBlock,
                         {
-                          borderLeftColor: mine ? '#fff' : theme.color.primary,
-                          backgroundColor: mine
-                            ? 'rgba(255,255,255,0.14)'
-                            : theme.color.background1,
+                          borderLeftColor: mine
+                            ? ui.onPrimaryContainer
+                            : ui.primary,
+                          backgroundColor: ui.surfaceVariant,
                         },
                       ]}
                     >
@@ -878,7 +1262,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                         numberOfLines={1}
                         style={[
                           theme.typography.caption1.medium,
-                          { color: mine ? '#fff' : theme.color.primary },
+                          { color: ui.onSurface },
                         ]}
                       >
                         {item.replyTo.senderName}
@@ -887,7 +1271,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                         numberOfLines={2}
                         style={[
                           theme.typography.caption1.regular,
-                          { color: mine ? '#EDE9FE' : theme.color.textSecondary },
+                          { color: ui.onSurfaceVariant },
                         ]}
                       >
                         {item.replyTo.deletedAt
@@ -898,7 +1282,11 @@ const ChatScreen = ({ route, navigation }: any) => {
                     </Pressable>
                   )}
                   {item.kind === 'image' && item.fileUrl ? (
-                    <Pressable onPress={() => openViewer(item)}>
+                    <Pressable
+                      onPress={() => openViewer(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open photo"
+                    >
                       <Image
                         source={{ uri: item.fileUrl }}
                         style={styles.imageAttachment}
@@ -906,33 +1294,13 @@ const ChatScreen = ({ route, navigation }: any) => {
                       />
                     </Pressable>
                   ) : item.kind === 'video' && item.fileUrl ? (
-                    <Pressable
+                    <VideoAttachmentCell
+                      uri={item.fileUrl}
+                      fileName={item.fileName}
+                      size={item.size}
+                      media={media}
                       onPress={() => openViewer(item)}
-                      style={styles.videoCard}
-                    >
-                      <Video
-                        source={{ uri: item.fileUrl }}
-                        style={styles.videoPreview}
-                        paused
-                        muted
-                        resizeMode="cover"
-                      />
-                      <View style={styles.videoPlayOverlay} pointerEvents="none">
-                        <MaterialDesignIcons
-                          name="play-circle"
-                          size={54}
-                          color="#FFFFFF"
-                          style={styles.videoPlayIcon}
-                        />
-                      </View>
-                      {!!item.fileName && (
-                        <View style={styles.videoNamePill} pointerEvents="none">
-                          <Text numberOfLines={1} style={styles.videoNameText}>
-                            {item.fileName}
-                          </Text>
-                        </View>
-                      )}
-                    </Pressable>
+                    />
                   ) : item.kind !== 'text' ? (
                     <Pressable onPress={() => openViewer(item)} style={styles.fileRow}>
                       <MaterialDesignIcons
@@ -944,7 +1312,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                               : 'file-document-outline'
                         }
                         size={item.kind === 'audio' ? 28 : 26}
-                        color={mine ? '#fff' : theme.color.primary}
+                        color={bubbleText}
                         style={styles.fileIcon}
                       />
                       <View style={styles.fileMeta}>
@@ -952,7 +1320,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                           numberOfLines={1}
                           style={[
                             theme.typography.body.medium,
-                            { color: mine ? '#fff' : theme.color.textPrimary },
+                            { color: bubbleText },
                           ]}
                         >
                           {item.fileName ?? 'Attachment'}
@@ -961,11 +1329,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                           <Text
                             style={[
                               theme.typography.caption1.regular,
-                              {
-                                color: mine
-                                  ? '#DDD6FE'
-                                  : theme.color.textSecondary,
-                              },
+                              { color: bubbleMuted },
                             ]}
                           >
                             {formatBytes(item.size)}
@@ -979,7 +1343,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                       style={[
                         theme.typography.body.regular,
                         styles.bubbleText,
-                        { color: mine ? '#fff' : theme.color.textPrimary },
+                        { color: bubbleText },
                       ]}
                     >
                       {item.body}
@@ -1000,9 +1364,9 @@ const ChatScreen = ({ route, navigation }: any) => {
                 </Text>
                 {tick && (
                   <MaterialDesignIcons
-                    name={tick === 'sent' ? 'check' : 'check-all'}
-                    size={14}
-                    color={tick === 'read' ? '#53BDEB' : timeColor}
+                    name={tickIcon}
+                    size={tickSize}
+                    color={tickColor}
                     style={styles.bubbleTick}
                   />
                 )}
@@ -1018,11 +1382,9 @@ const ChatScreen = ({ route, navigation }: any) => {
                       styles.reactionChip,
                       {
                         backgroundColor: reaction.mine
-                          ? theme.color.extendedPrimary50
-                          : theme.color.background3,
-                        borderColor: reaction.mine
-                          ? theme.color.primary
-                          : 'transparent',
+                          ? ui.primaryContainer
+                          : ui.surfaceVariant,
+                        borderColor: reaction.mine ? ui.primary : 'transparent',
                       },
                     ]}
                     onPress={() => applyReaction(item, reaction.emoji)}
@@ -1032,7 +1394,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                       <Text
                         style={[
                           theme.typography.caption1.regular,
-                          { color: theme.color.textSecondary },
+                          { color: reaction.mine ? ui.onSurface : ui.onSurfaceVariant },
                         ]}
                       >
                         {reaction.count}
@@ -1049,7 +1411,9 @@ const ChatScreen = ({ route, navigation }: any) => {
     [
       user?._id,
       conversation?.type,
-      theme,
+      theme.typography,
+      ui,
+      media,
       applyReaction,
       openViewer,
       messages,
@@ -1060,9 +1424,25 @@ const ChatScreen = ({ route, navigation }: any) => {
   );
 
   const isSubscribed = thread !== undefined;
-  const canSend = (!!text.trim() || pending.length > 0) && !sending;
+  // The send button depends on the DRAFT only. Attachments upload on their own
+  // clock, so a half-finished 40 MB upload never disables sending a reply.
+  const canSend = !!text.trim() && !sending;
   const viewerWidth = windowWidth - 32;
   const viewerHeight = windowHeight - 160;
+  /**
+   * Which branch (if any) the single viewer player should take. `null` means
+   * the player is not mounted at all - an image, a plain file or a deleted
+   * attachment must never leave a decoder running from a previous item.
+   */
+  const viewerMediaKind: 'video' | 'audio' | null =
+    viewer?.message.fileUrl && viewer.message.kind === 'video'
+      ? 'video'
+      : viewer?.message.fileUrl && viewer.message.kind === 'audio'
+        ? 'audio'
+        : null;
+  // `actionCount` must stay in lockstep with the rows the menu below renders,
+  // or `estimatedMenuHeight` puts the panel off-screen. Rows are: Reply,
+  // [Copy], Forward, Info, [Delete] -> 3 base.
   const actionCount = actionTarget
     ? 3 +
       (actionTarget.kind === 'text' ? 1 : 0) +
@@ -1091,36 +1471,50 @@ const ChatScreen = ({ route, navigation }: any) => {
 
   return (
     <SafeAreaView
-      style={[styles.container, { backgroundColor: theme.color.background1 }]}
+      style={[styles.container, { backgroundColor: ui.background }]}
       edges={['top']}
     >
       <View
         style={[
           styles.header,
-          { borderBottomColor: theme.color.borderDefault },
+          { borderBottomColor: ui.outlineVariant },
         ]}
       >
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back}>
-          <Text style={[styles.backIcon, { color: theme.color.textPrimary }]}>
+          <Text style={[styles.backIcon, { color: ui.onSurface }]}>
             ‹
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.headerBody} onPress={openInfo}>
-          <Text
-            numberOfLines={1}
-            style={[
-              theme.typography.heading3.bold,
-              { color: theme.color.textPrimary },
+          <UserAvatar
+            entity={conversation}
+            name={conversation?.title ?? fallbackTitle}
+            size={36}
+            variant="text"
+            shape={conversation?.type === 'group' ? 'rounded' : 'circle'}
+            containerStyle={[
+              styles.headerAvatar,
+              { backgroundColor: ui.primaryContainer },
             ]}
-          >
-            {conversation?.title ?? fallbackTitle}
-          </Text>
+            labelStyle={styles.headerAvatarInitials}
+            labelColor={ui.primary}
+          />
+          <View style={styles.headerText}>
+            <Text
+              numberOfLines={1}
+              style={[
+                theme.typography.heading3.bold,
+                { color: ui.onSurface },
+              ]}
+            >
+              {conversation?.title ?? fallbackTitle}
+            </Text>
           {typingNames && typingNames.length > 0 ? (
             <Text
               numberOfLines={1}
               style={[
                 theme.typography.caption1.regular,
-                { color: theme.color.primary },
+                { color: ui.primary },
               ]}
             >
               {typingNames.length === 1
@@ -1131,13 +1525,14 @@ const ChatScreen = ({ route, navigation }: any) => {
             <Text
               style={[
                 theme.typography.caption1.regular,
-                { color: theme.color.textSecondary },
+                { color: ui.onSurfaceVariant },
               ]}
             >
               {conversation.members.length}{' '}
               {conversation.members.length === 1 ? 'member' : 'members'}
             </Text>
           ) : null}
+          </View>
         </TouchableOpacity>
         {conversation?.type === 'dm' && otherMember && (
           <>
@@ -1148,7 +1543,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <MaterialDesignIcons
                 name="phone-outline"
                 size={22}
-                color={theme.color.textPrimary}
+                color={ui.onSurface}
               />
             </TouchableOpacity>
             <TouchableOpacity
@@ -1158,7 +1553,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <MaterialDesignIcons
                 name="video-outline"
                 size={22}
-                color={theme.color.textPrimary}
+                color={ui.onSurface}
               />
             </TouchableOpacity>
           </>
@@ -1167,14 +1562,14 @@ const ChatScreen = ({ route, navigation }: any) => {
           <MaterialDesignIcons
             name="information-outline"
             size={22}
-            color={theme.color.textPrimary}
+            color={ui.onSurface}
           />
         </TouchableOpacity>
       </View>
 
       {!isSubscribed ? (
         <View style={styles.center}>
-          <ActivityIndicator color={theme.color.primary} />
+          <ActivityIndicator color={ui.primary} />
         </View>
       ) : (
         <FlatList
@@ -1199,7 +1594,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <Text
                 style={[
                   theme.typography.body.medium,
-                  { color: theme.color.textSecondary },
+                  { color: ui.onSurfaceVariant },
                 ]}
               >
                 No messages yet
@@ -1217,58 +1612,140 @@ const ChatScreen = ({ route, navigation }: any) => {
             style={[
               styles.pendingBar,
               {
-                backgroundColor: theme.color.background2,
-                borderTopColor: theme.color.borderDefault,
+                backgroundColor: ui.surface,
+                borderTopColor: ui.outlineVariant,
               },
             ]}
           >
             <FlatList
               horizontal
               data={pending}
+              extraData={pending}
               keyExtractor={item => item.id}
               showsHorizontalScrollIndicator={false}
               style={styles.pendingList}
-              renderItem={({ item }) => (
-                <View
-                  style={[
-                    styles.pendingChip,
-                    { backgroundColor: paperTheme.colors.surfaceVariant },
-                  ]}
-                >
-                  {item.kind === 'image' ? (
-                    <Image
-                      source={{ uri: item.uri }}
-                      style={styles.pendingThumb}
-                    />
-                  ) : (
-                    <MaterialDesignIcons
-                      name={pendingIconName(item.kind)}
-                      size={20}
-                      color={paperTheme.colors.onSurfaceVariant}
-                      style={styles.pendingIcon}
-                    />
-                  )}
-                  <Text
-                    numberOfLines={1}
+              renderItem={({ item }) => {
+                const percent =
+                  item.status === 'uploading' && item.progress != null
+                    ? Math.round(item.progress * 100)
+                    : null;
+                const label =
+                  item.status === 'failed'
+                    ? item.error ?? 'Upload failed'
+                    : item.status === 'sending'
+                      ? 'Sending…'
+                      : percent != null
+                        ? `Uploading… ${percent}%`
+                        : 'Uploading…';
+                // The platform picker knows how long a picked video is; the
+                // transcript does not, so this is the only place we can show
+                // a duration before the message exists.
+                const duration = formatDuration(item.durationSeconds);
+                const detail =
+                  item.status === 'failed'
+                    ? label
+                    : duration
+                      ? `${label}  ·  ${duration}`
+                      : label;
+                return (
+                  <View
                     style={[
-                      styles.pendingName,
-                      { color: paperTheme.colors.onSurfaceVariant },
+                      styles.pendingChip,
+                      {
+                        backgroundColor: ui.surfaceVariant,
+                        borderColor:
+                          item.status === 'failed' ? ui.error : ui.outlineVariant,
+                      },
                     ]}
                   >
-                    {item.name}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => removePending(item.id)}
-                    style={styles.pendingRemove}
-                  >
-                    <MaterialDesignIcons
-                      name="close"
-                      size={14}
-                      color={paperTheme.colors.onSurfaceVariant}
-                    />
-                  </TouchableOpacity>
-                </View>
-              )}
+                    {item.kind === 'image' ? (
+                      <Image
+                        source={{ uri: item.uri }}
+                        style={styles.pendingThumb}
+                      />
+                    ) : (
+                      <MaterialDesignIcons
+                        name={pendingIconName(item.kind)}
+                        size={20}
+                        color={ui.onSurfaceVariant}
+                        style={styles.pendingIcon}
+                      />
+                    )}
+                    <View style={styles.pendingInfo}>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.pendingName, { color: ui.onSurface }]}
+                      >
+                        {item.name}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.pendingStatus,
+                          {
+                            color:
+                              item.status === 'failed'
+                                ? ui.error
+                                : ui.onSurfaceVariant,
+                          },
+                        ]}
+                      >
+                        {detail}
+                      </Text>
+                      {item.status !== 'failed' && (
+                        <View
+                          style={[
+                            styles.pendingTrack,
+                            { backgroundColor: ui.outlineVariant },
+                          ]}
+                        >
+                          <View
+                            style={[
+                              styles.pendingFill,
+                              {
+                                backgroundColor: ui.onSurfaceVariant,
+                                // No length known: show a short muted segment
+                                // rather than a full bar, which would read as
+                                // "finished".
+                                width: percent == null ? '30%' : `${percent}%`,
+                                opacity: percent == null ? 0.4 : 1,
+                              },
+                            ]}
+                          />
+                        </View>
+                      )}
+                    </View>
+                    {item.status === 'failed' && (
+                      <TouchableOpacity
+                        onPress={() => retryUpload(item.id)}
+                        style={styles.pendingAction}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Retry uploading ${item.name}`}
+                      >
+                        <MaterialDesignIcons
+                          name="refresh"
+                          size={18}
+                          color={ui.onSurface}
+                        />
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => removePending(item.id)}
+                      style={styles.pendingRemove}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${item.name}`}
+                    >
+                      <MaterialDesignIcons
+                        name="close"
+                        size={14}
+                        color={ui.onSurfaceVariant}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                );
+              }}
             />
           </View>
         )}
@@ -1277,20 +1754,20 @@ const ChatScreen = ({ route, navigation }: any) => {
             style={[
               styles.replyBar,
               {
-                backgroundColor: theme.color.background2,
-                borderTopColor: theme.color.borderDefault,
+                backgroundColor: ui.surface,
+                borderTopColor: ui.outlineVariant,
               },
             ]}
           >
             <View
-              style={[styles.replyBarAccent, { backgroundColor: theme.color.primary }]}
+              style={[styles.replyBarAccent, { backgroundColor: ui.primary }]}
             />
             <View style={styles.replyBarBody}>
               <Text
                 numberOfLines={1}
                 style={[
                   theme.typography.caption1.medium,
-                  { color: theme.color.primary },
+                  { color: ui.primary },
                 ]}
               >
                 {replyTarget.senderId === user?._id
@@ -1301,7 +1778,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                 numberOfLines={1}
                 style={[
                   theme.typography.caption1.regular,
-                  { color: theme.color.textSecondary },
+                  { color: ui.onSurfaceVariant },
                 ]}
               >
                 {replyTarget.body ?? attachmentLabel(replyTarget.kind)}
@@ -1314,7 +1791,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <MaterialDesignIcons
                 name="close"
                 size={18}
-                color={theme.color.textSecondary}
+                color={ui.onSurfaceVariant}
               />
             </TouchableOpacity>
           </View>
@@ -1323,50 +1800,49 @@ const ChatScreen = ({ route, navigation }: any) => {
           style={[
             styles.composer,
             {
-              backgroundColor: theme.color.background2,
-              borderTopColor: theme.color.borderDefault,
+              backgroundColor: ui.surface,
+              borderTopColor: ui.outlineVariant,
             },
           ]}
         >
           <TouchableOpacity
             style={styles.attachButton}
             onPress={() => setAttachOpen(true)}
-            disabled={sending}
           >
             <MaterialDesignIcons
               name="plus-circle-outline"
               size={26}
-              color={theme.color.primary}
+              color={ui.primary}
             />
           </TouchableOpacity>
           <TextInput
             style={[
               styles.input,
               {
-                backgroundColor: theme.color.background1,
-                color: theme.color.textPrimary,
-                borderColor: theme.color.borderLight,
+                backgroundColor: ui.background,
+                color: ui.onSurface,
+                borderColor: ui.outlineVariant,
               },
             ]}
             value={text}
             onChangeText={onTextChange}
             placeholder="Type your message..."
-            placeholderTextColor={theme.color.textTertiary}
+            placeholderTextColor={ui.outline}
             multiline
           />
           <TouchableOpacity
             style={[
               styles.sendButton,
-              { backgroundColor: theme.color.primary },
+              { backgroundColor: ui.primary },
               !canSend && styles.sendButtonDisabled,
             ]}
             onPress={onSend}
             disabled={!canSend}
           >
             {sending ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={ui.onPrimary} size="small" />
             ) : (
-              <MaterialDesignIcons name="send" size={18} color="#fff" />
+              <MaterialDesignIcons name="send" size={18} color={ui.onPrimary} />
             )}
           </TouchableOpacity>
         </View>
@@ -1378,24 +1854,27 @@ const ChatScreen = ({ route, navigation }: any) => {
         animationType="fade"
         onRequestClose={() => setAttachOpen(false)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setAttachOpen(false)}>
+        <Pressable
+          style={[styles.modalBackdrop, { backgroundColor: ui.backdrop }]}
+          onPress={() => setAttachOpen(false)}
+        >
           <View
             style={[
               styles.attachSheet,
-              { backgroundColor: theme.color.background1 },
+              { backgroundColor: ui.background },
             ]}
           >
             <TouchableOpacity style={styles.attachOption} onPress={pickPhoto}>
               <MaterialDesignIcons
                 name="image-outline"
                 size={22}
-                color={theme.color.textPrimary}
+                color={ui.onSurface}
                 style={styles.attachOptionIcon}
               />
               <Text
                 style={[
                   theme.typography.body.medium,
-                  { color: theme.color.textPrimary },
+                  { color: ui.onSurface },
                 ]}
               >
                 Photo
@@ -1405,13 +1884,13 @@ const ChatScreen = ({ route, navigation }: any) => {
               <MaterialDesignIcons
                 name="video-outline"
                 size={22}
-                color={theme.color.textPrimary}
+                color={ui.onSurface}
                 style={styles.attachOptionIcon}
               />
               <Text
                 style={[
                   theme.typography.body.medium,
-                  { color: theme.color.textPrimary },
+                  { color: ui.onSurface },
                 ]}
               >
                 Video
@@ -1421,13 +1900,13 @@ const ChatScreen = ({ route, navigation }: any) => {
               <MaterialDesignIcons
                 name="file-document-outline"
                 size={22}
-                color={theme.color.textPrimary}
+                color={ui.onSurface}
                 style={styles.attachOptionIcon}
               />
               <Text
                 style={[
                   theme.typography.body.medium,
-                  { color: theme.color.textPrimary },
+                  { color: ui.onSurface },
                 ]}
               >
                 Document
@@ -1441,9 +1920,11 @@ const ChatScreen = ({ route, navigation }: any) => {
         visible={viewer !== null}
         transparent
         animationType="fade"
-        onRequestClose={() => setViewer(null)}
+        onRequestClose={closeViewer}
       >
-        <View style={styles.viewerBackdrop}>
+        <View
+          style={[styles.viewerBackdrop, { backgroundColor: media.scrim }]}
+        >
           {viewer && (
             <>
               <View
@@ -1451,28 +1932,29 @@ const ChatScreen = ({ route, navigation }: any) => {
                   styles.viewerTopBar,
                   {
                     top: insets.top + 8,
-                    backgroundColor: paperTheme.colors.elevation.level3,
+                    backgroundColor: ui.elevation3,
+                    shadowColor: ui.shadow,
                   },
                 ]}
               >
                 <TouchableOpacity
                   style={styles.viewerTopButton}
-                  onPress={() => setViewer(null)}
+                  onPress={closeViewer}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
                 >
-                  <MaterialDesignIcons
-                    name="close"
-                    size={24}
-                    color={paperTheme.colors.onSurface}
-                  />
+                  <MaterialDesignIcons name="close" size={24} color={ui.onSurface} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.viewerTopButton}
                   onPress={forwardFromViewer}
+                  accessibilityRole="button"
+                  accessibilityLabel="Forward"
                 >
                   <MaterialDesignIcons
                     name="share-variant"
                     size={22}
-                    color={paperTheme.colors.onSurface}
+                    color={ui.onSurface}
                   />
                 </TouchableOpacity>
               </View>
@@ -1485,38 +1967,119 @@ const ChatScreen = ({ route, navigation }: any) => {
                   ]}
                   resizeMode="contain"
                 />
-              ) : viewer.message.kind === 'video' && viewer.message.fileUrl ? (
-                <Video
-                  source={{ uri: viewer.message.fileUrl }}
-                  style={[
-                    styles.viewerVideo,
-                    { width: viewerWidth, height: viewerHeight },
-                  ]}
-                  controls
-                  paused={false}
-                  resizeMode="contain"
-                />
+              ) : viewerMediaKind ? (
+                // The ONE and only <Video> in this file. It mounts when a
+                // playable item is opened and unmounts when the viewer closes
+                // or a non-playable item is shown, so a previously-viewed clip
+                // never keeps a decoder (and its audio focus) alive.
+                viewerMedia.status === 'error' ? (
+                  <View
+                    style={[
+                      styles.viewerErrorCard,
+                      { backgroundColor: ui.elevation2 },
+                    ]}
+                  >
+                    <MaterialDesignIcons
+                      name="alert-circle-outline"
+                      size={44}
+                      color={ui.onSurfaceVariant}
+                    />
+                    <Text
+                      style={[
+                        styles.viewerFileName,
+                        { color: ui.onSurface },
+                      ]}
+                    >
+                      Could not play {viewerMediaKind === 'video' ? 'video' : 'audio'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.viewerFileMeta,
+                        { color: ui.onSurfaceVariant },
+                      ]}
+                    >
+                      {viewer.message.fileName ?? ''}
+                    </Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.viewerRetryPill,
+                        { backgroundColor: ui.primaryContainer },
+                      ]}
+                      onPress={reloadViewerMedia}
+                      accessibilityRole="button"
+                    >
+                      <Text
+                        style={[
+                          styles.viewerRetryLabel,
+                          { color: ui.onPrimaryContainer },
+                        ]}
+                      >
+                        Try again
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View
+                    style={
+                      viewerMediaKind === 'video'
+                        ? [
+                            styles.viewerVideo,
+                            {
+                              width: viewerWidth,
+                              height: viewerHeight,
+                              backgroundColor: media.scrim,
+                            },
+                          ]
+                        : styles.viewerAudioPlayer
+                    }
+                  >
+                    <Video
+                      key={`${viewer.message._id}:${viewerMedia.nonce}`}
+                      source={{ uri: viewer.message.fileUrl as string }}
+                      style={StyleSheet.absoluteFill}
+                      controls
+                      paused={false}
+                      resizeMode="contain"
+                      onLoad={() =>
+                        setViewerMedia(prev =>
+                          prev.status === 'loading'
+                            ? { ...prev, status: 'ready' }
+                            : prev,
+                        )
+                      }
+                      onError={() =>
+                        setViewerMedia({ status: 'error', nonce: Date.now() })
+                      }
+                    />
+                    {/* Buffering is a spinner, not a black rectangle. */}
+                    {viewerMedia.status === 'loading' && (
+                      <View
+                        style={[StyleSheet.absoluteFill, styles.viewerLoading]}
+                        pointerEvents="none"
+                      >
+                        <ActivityIndicator color={media.onMedia} size="large" />
+                      </View>
+                    )}
+                  </View>
+                )
               ) : viewer.message.kind === 'audio' ? (
                 <View style={styles.viewerAudioWrap}>
                   <MaterialDesignIcons
                     name="music-note"
                     size={96}
-                    color="#FFFFFF"
+                    color={media.onMedia}
                   />
                   <Text
                     numberOfLines={2}
-                    style={styles.viewerAudioName}
+                    style={[styles.viewerAudioName, { color: media.onMedia }]}
                   >
                     {viewer.message.fileName ?? 'Voice note'}
                   </Text>
-                  {!!viewer.message.fileUrl && (
-                    <Video
-                      source={{ uri: viewer.message.fileUrl }}
-                      style={styles.viewerAudioPlayer}
-                      controls
-                      paused={false}
-                    />
-                  )}
+                  <Text
+                    style={[styles.viewerFileMeta, { color: media.onMedia }]}
+                  >
+                    This recording could not be loaded.
+                  </Text>
                 </View>
               ) : (
                 <View
@@ -1524,20 +2087,20 @@ const ChatScreen = ({ route, navigation }: any) => {
                     styles.viewerFileCard,
                     {
                       width: Math.min(windowWidth - 48, 340),
-                      backgroundColor: paperTheme.colors.elevation.level2,
+                      backgroundColor: ui.elevation2,
                     },
                   ]}
                 >
                   <MaterialDesignIcons
                     name="file-document-outline"
                     size={48}
-                    color={paperTheme.colors.onSurfaceVariant}
+                    color={ui.onSurfaceVariant}
                   />
                   <Text
                     numberOfLines={2}
                     style={[
                       styles.viewerFileName,
-                      { color: paperTheme.colors.onSurface },
+                      { color: ui.onSurface },
                     ]}
                   >
                     {viewer.message.fileName ?? 'Attachment'}
@@ -1546,7 +2109,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                     <Text
                       style={[
                         styles.viewerFileMeta,
-                        { color: paperTheme.colors.onSurfaceVariant },
+                        { color: ui.onSurfaceVariant },
                       ]}
                     >
                       {formatBytes(viewer.message.size)}
@@ -1556,7 +2119,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                     <Text
                       style={[
                         styles.viewerFileMeta,
-                        { color: paperTheme.colors.onSurfaceVariant },
+                        { color: ui.onSurfaceVariant },
                       ]}
                     >
                       {viewer.message.mimeType}
@@ -1565,7 +2128,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                   <Text
                     style={[
                       styles.viewerFileTime,
-                      { color: paperTheme.colors.onSurfaceVariant },
+                      { color: ui.onSurfaceVariant },
                     ]}
                   >
                     {dayjs(viewer.message.createdAt).format(
@@ -1590,8 +2153,9 @@ const ChatScreen = ({ route, navigation }: any) => {
                   left: confirmLeft,
                   top: confirmTop,
                   width: confirmWidth,
-                  backgroundColor: paperTheme.colors.elevation.level3,
-                  borderColor: paperTheme.colors.outlineVariant,
+                  backgroundColor: ui.elevation3,
+                  shadowColor: ui.shadow,
+                  borderColor: ui.outlineVariant,
                   opacity: menuOpacity,
                   transform: [{ scale: menuScale }],
                 },
@@ -1600,7 +2164,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <Text
                 style={[
                   styles.confirmTitle,
-                  { color: paperTheme.colors.onSurface },
+                  { color: ui.onSurface },
                 ]}
               >
                 Delete message?
@@ -1608,7 +2172,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <Text
                 style={[
                   styles.confirmBody,
-                  { color: paperTheme.colors.onSurfaceVariant },
+                  { color: ui.onSurfaceVariant },
                 ]}
               >
                 This will delete the message for everyone.
@@ -1617,14 +2181,14 @@ const ChatScreen = ({ route, navigation }: any) => {
                 <TouchableOpacity
                   style={[
                     styles.confirmPill,
-                    { backgroundColor: paperTheme.colors.surfaceVariant },
+                    { backgroundColor: ui.surfaceVariant },
                   ]}
                   onPress={cancelPanel}
                 >
                   <Text
                     style={[
                       styles.confirmPillLabel,
-                      { color: paperTheme.colors.onSurfaceVariant },
+                      { color: ui.onSurfaceVariant },
                     ]}
                   >
                     Cancel
@@ -1633,14 +2197,14 @@ const ChatScreen = ({ route, navigation }: any) => {
                 <TouchableOpacity
                   style={[
                     styles.confirmPill,
-                    { backgroundColor: paperTheme.colors.errorContainer },
+                    { backgroundColor: ui.errorContainer },
                   ]}
                   onPress={confirmDeleteMessage}
                 >
                   <Text
                     style={[
                       styles.confirmPillLabel,
-                      { color: paperTheme.colors.onErrorContainer },
+                      { color: ui.onErrorContainer },
                     ]}
                   >
                     Delete
@@ -1656,8 +2220,9 @@ const ChatScreen = ({ route, navigation }: any) => {
                   left: confirmLeft,
                   top: confirmTop,
                   width: confirmWidth,
-                  backgroundColor: paperTheme.colors.elevation.level3,
-                  borderColor: paperTheme.colors.outlineVariant,
+                  backgroundColor: ui.elevation3,
+                  shadowColor: ui.shadow,
+                  borderColor: ui.outlineVariant,
                   opacity: menuOpacity,
                   transform: [{ scale: menuScale }],
                 },
@@ -1666,7 +2231,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <Text
                 style={[
                   styles.confirmTitle,
-                  { color: paperTheme.colors.onSurface },
+                  { color: ui.onSurface },
                 ]}
               >
                 Message info
@@ -1674,7 +2239,7 @@ const ChatScreen = ({ route, navigation }: any) => {
               <Text
                 style={[
                   styles.confirmBody,
-                  { color: paperTheme.colors.onSurfaceVariant },
+                  { color: ui.onSurfaceVariant },
                 ]}
               >
                 {actionTarget.sender.displayName}
@@ -1685,14 +2250,14 @@ const ChatScreen = ({ route, navigation }: any) => {
                 <TouchableOpacity
                   style={[
                     styles.confirmPill,
-                    { backgroundColor: paperTheme.colors.primaryContainer },
+                    { backgroundColor: ui.primaryContainer },
                   ]}
                   onPress={cancelPanel}
                 >
                   <Text
                     style={[
                       styles.confirmPillLabel,
-                      { color: paperTheme.colors.onPrimaryContainer },
+                      { color: ui.onPrimaryContainer },
                     ]}
                   >
                     Close
@@ -1707,8 +2272,9 @@ const ChatScreen = ({ route, navigation }: any) => {
                 {
                   left: menuLeft,
                   top: menuTop,
-                  backgroundColor: paperTheme.colors.elevation.level3,
-                  borderColor: paperTheme.colors.outlineVariant,
+                  backgroundColor: ui.elevation3,
+                  shadowColor: ui.shadow,
+                  borderColor: ui.outlineVariant,
                   opacity: menuOpacity,
                   transform: [{ scale: menuScale }],
                 },
@@ -1726,32 +2292,70 @@ const ChatScreen = ({ route, navigation }: any) => {
               <View
                 style={[
                   styles.sheetDivider,
-                  { backgroundColor: paperTheme.colors.outlineVariant },
+                  { backgroundColor: ui.outlineVariant },
                 ]}
               />
-              <MenuAction icon="reply" label="Reply" onPress={replyFromMenu} />
+              {/* MenuAction `icon` must be an explicit render function: the app
+                  ships only material-design-icons, and Paper's default icon
+                  renderer resolves MaterialCommunityIcons, which is absent -
+                  a string prop here throws when the menu opens. */}
+              <MenuAction
+                icon={() => (
+                  <MaterialDesignIcons
+                    name="reply"
+                    size={22}
+                    color={ui.onSurfaceVariant}
+                  />
+                )}
+                label="Reply"
+                onPress={replyFromMenu}
+              />
               {actionTarget.kind === 'text' && (
                 <MenuAction
-                  icon="content-copy"
+                  icon={() => (
+                    <MaterialDesignIcons
+                      name="content-copy"
+                      size={22}
+                      color={ui.onSurfaceVariant}
+                    />
+                  )}
                   label="Copy"
                   onPress={copyFromMenu}
                 />
               )}
               <MenuAction
-                icon="share-variant"
+                icon={() => (
+                  <MaterialDesignIcons
+                    name="share-variant"
+                    size={22}
+                    color={ui.onSurfaceVariant}
+                  />
+                )}
                 label="Forward"
                 onPress={() => forwardMessageAction(actionTarget)}
               />
               <MenuAction
-                icon="information-outline"
+                icon={() => (
+                  <MaterialDesignIcons
+                    name="information-outline"
+                    size={22}
+                    color={ui.onSurfaceVariant}
+                  />
+                )}
                 label="Info"
                 onPress={showMessageInfo}
               />
               {actionTarget.senderId === user?._id && (
                 <MenuAction
-                  icon="delete-outline"
+                  icon={() => (
+                    <MaterialDesignIcons
+                      name="delete-outline"
+                      size={22}
+                      color={ui.error}
+                    />
+                  )}
                   label="Delete"
-                  color={paperTheme.colors.error}
+                  color={ui.error}
                   onPress={requestDelete}
                 />
               )}
@@ -1787,7 +2391,21 @@ const styles = StyleSheet.create({
   },
   headerBody: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     marginLeft: 4,
+  },
+  headerText: {
+    flex: 1,
+    minWidth: 0,
+    marginLeft: 8,
+  },
+  headerAvatar: {
+    marginVertical: 2,
+  },
+  headerAvatarInitials: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   headerAction: {
     paddingHorizontal: 8,
@@ -1835,7 +2453,18 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   senderName: {
+    marginLeft: 6,
+  },
+  senderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  senderAvatar: {
     marginBottom: 2,
+  },
+  senderInitials: {
+    fontSize: 9,
+    fontWeight: '700',
   },
   forwardedRow: {
     flexDirection: 'row',
@@ -1888,33 +2517,41 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     marginBottom: 4,
-    backgroundColor: '#000000',
   },
-  videoPreview: {
+  videoPoster: {
     ...StyleSheet.absoluteFillObject,
+  },
+  videoPosterFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoFallbackText: {
+    fontSize: 12,
+    marginTop: 4,
   },
   videoPlayOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  videoPlayIcon: {
-    textShadowColor: 'rgba(0,0,0,0.45)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 5,
+  videoPlayButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  videoNamePill: {
+  videoChip: {
     position: 'absolute',
     left: 8,
     bottom: 8,
-    maxWidth: 180,
+    maxWidth: 190,
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  videoNameText: {
-    color: '#FFFFFF',
+  videoChipText: {
     fontSize: 11,
   },
   fileRow: {
@@ -2012,11 +2649,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 16,
+    borderWidth: 1,
     paddingLeft: 6,
     paddingRight: 4,
-    paddingVertical: 4,
+    paddingVertical: 5,
     marginRight: 8,
-    maxWidth: 220,
+    maxWidth: 250,
+    minHeight: 38,
   },
   pendingThumb: {
     width: 28,
@@ -2026,10 +2665,31 @@ const styles = StyleSheet.create({
   pendingIcon: {
     marginHorizontal: 6,
   },
-  pendingName: {
+  pendingInfo: {
+    flex: 1,
     flexShrink: 1,
+    marginHorizontal: 4,
+  },
+  pendingName: {
     fontSize: 13,
-    marginRight: 2,
+  },
+  pendingStatus: {
+    fontSize: 11,
+    marginTop: 1,
+  },
+  pendingTrack: {
+    height: 3,
+    borderRadius: 2,
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  pendingFill: {
+    height: 3,
+    borderRadius: 2,
+  },
+  pendingAction: {
+    padding: 4,
+    marginLeft: 2,
   },
   pendingRemove: {
     padding: 4,
@@ -2037,7 +2697,6 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
   attachSheet: {
@@ -2057,7 +2716,6 @@ const styles = StyleSheet.create({
   },
   viewerBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.94)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2073,6 +2731,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     zIndex: 2,
     elevation: 6,
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
   viewerTopButton: {
     width: 44,
@@ -2087,7 +2748,6 @@ const styles = StyleSheet.create({
   viewerVideo: {
     borderRadius: 16,
     overflow: 'hidden',
-    backgroundColor: '#000000',
   },
   viewerAudioWrap: {
     width: '100%',
@@ -2095,7 +2755,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   viewerAudioName: {
-    color: '#FFFFFF',
     fontSize: 17,
     marginTop: 16,
     marginBottom: 20,
@@ -2106,6 +2765,27 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: 16,
     overflow: 'hidden',
+  },
+  viewerErrorCard: {
+    borderRadius: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: 'center',
+    maxWidth: 320,
+  },
+  viewerLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerRetryPill: {
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    marginTop: 18,
+  },
+  viewerRetryLabel: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   viewerFileCard: {
     borderRadius: 24,
@@ -2142,7 +2822,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingVertical: 8,
     elevation: 4,
-    shadowColor: '#000',
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
@@ -2185,7 +2864,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 20,
     elevation: 4,
-    shadowColor: '#000',
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },

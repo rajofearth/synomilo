@@ -9,6 +9,7 @@ declare const TextEncoder: new () => { encode(input?: string): Uint8Array };
 import {
   genSalt,
   genToken,
+  isMaintainer,
   normalizeUsername,
   publicUser,
   requireUser,
@@ -82,6 +83,11 @@ export const register = mutation({
       throw new ConvexError(
         "Username must be 3-32 characters: letters, numbers, dots, dashes or underscores",
       );
+    }
+    // Maintainer usernames are reserved so they cannot be claimed by
+    // self-registration, which is what made the updates.publish gate forgeable.
+    if (isMaintainer(normalized)) {
+      throw new ConvexError("That username is reserved. Try another one.");
     }
     if (password.length < 6) {
       throw new ConvexError("Password must be at least 6 characters");

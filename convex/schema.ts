@@ -69,7 +69,11 @@ export default defineSchema({
     forwardedFrom: v.optional(v.string()),
     deletedAt: v.optional(v.number()),
     createdAt: v.number(),
-  }).index("by_conversation_createdAt", ["conversationId", "createdAt"]),
+  })
+    .index("by_conversation_createdAt", ["conversationId", "createdAt"])
+    // Backs the storageId -> conversation ownership check in files.url. Without it,
+    // any authenticated user could mint a signed URL for any blob in the deployment.
+    .index("by_storageId", ["storageId"]),
 
   reactions: defineTable({
     messageId: v.id("messages"),
@@ -94,10 +98,22 @@ export default defineSchema({
     createdAt: v.number(),
     answeredAt: v.optional(v.number()),
     endedAt: v.optional(v.number()),
+    // Why the call stopped. Without it "declined", "no answer" and "cancelled"
+    // before pickup are indistinguishable in the call log.
+    endReason: v.optional(
+      v.union(
+        v.literal("hangup"),
+        v.literal("declined"),
+        v.literal("timeout"),
+        v.literal("failed"),
+        v.literal("busy"),
+      ),
+    ),
   })
     .index("by_callee_status", ["calleeId", "status"])
     .index("by_caller", ["callerId"])
-    .index("by_callee", ["calleeId"]),
+    .index("by_callee", ["calleeId"])
+    .index("by_createdAt", ["createdAt"]),
 
   callSignals: defineTable({
     callId: v.id("calls"),
@@ -119,4 +135,19 @@ export default defineSchema({
     notes: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_version", ["version"]),
+
+  /**
+   * One row per signed-in device. `users.pushToken` was a single scalar, so
+   * signing in on a second device silently un-registered the first and that
+   * device stopped receiving calls entirely.
+   */
+  pushTokens: defineTable({
+    userId: v.id("users"),
+    token: v.string(),
+    platform: v.union(v.literal("android"), v.literal("ios"), v.literal("web")),
+    enabled: v.optional(v.boolean()),
+    lastSeenAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_token", ["token"]),
 });

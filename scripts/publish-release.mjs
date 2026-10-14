@@ -3,12 +3,41 @@ import { api } from "../convex/_generated/api.js";
 import fs from "node:fs";
 import path from "node:path";
 
-const CONVEX_URL = "https://glad-capybara-533.convex.cloud";
+// The release credential used to be hardcoded in this file and committed to
+// git, which handed anyone who cloned the repo the ability to push an APK to
+// every install. It now comes from the environment, with .env.local as a
+// gitignored fallback.
+function loadLocalEnv() {
+  const envPath = path.resolve(".env.local");
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!match) continue;
+    const key = match[1];
+    const value = match[2].replace(/^["'](.*)["']$/, "$1");
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+loadLocalEnv();
+
+const CONVEX_URL =
+  process.env.CONVEX_URL ?? "https://glad-capybara-533.convex.cloud";
+
+const RELEASE_USERNAME = process.env.RELEASE_USERNAME;
+const RELEASE_PASSWORD = process.env.RELEASE_PASSWORD;
 
 const [version, apkPath, notes = ""] = process.argv.slice(2);
 if (!version || !apkPath) {
   console.error(
     'usage: node scripts/publish-release.mjs <version> <apk-path> "<notes>"',
+  );
+  process.exit(1);
+}
+
+if (!RELEASE_USERNAME || !RELEASE_PASSWORD) {
+  console.error(
+    "RELEASE_USERNAME / RELEASE_PASSWORD are not set.\n" +
+      "Put them in .env.local (gitignored) or export them before running.",
   );
   process.exit(1);
 }
@@ -24,8 +53,8 @@ const client = new ConvexHttpClient(CONVEX_URL, {
 });
 
 const login = await client.mutation(api.auth.login, {
-  username: "yashraj",
-  password: "testpass123",
+  username: RELEASE_USERNAME,
+  password: RELEASE_PASSWORD,
 });
 const token = login?.token;
 if (!token) {

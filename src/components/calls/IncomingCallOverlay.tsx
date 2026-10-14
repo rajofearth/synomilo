@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { navigate } from '../../navigation/NavigationService';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from '../convex/UserAvatar';
 import {
   dismissAllCallNotifications,
   dismissCallNotification,
@@ -33,11 +35,20 @@ const IncomingCallOverlay: React.FC = () => {
     | {
         _id: string;
         type: 'audio' | 'video';
-        caller: { displayName: string } | null;
+        caller: {
+          _id: string;
+          displayName: string;
+          username: string;
+          avatarUrl: string | null;
+        } | null;
       }
     | null
     | undefined;
   const incomingId = incoming?._id ?? null;
+  // `useQuery` returns undefined while the first result is in flight; null once it
+  // has resolved to "nothing ringing". Distinguishing the two is what stops the
+  // mount-time cancel from firing before the server has been asked.
+  const querySettled = incoming !== undefined;
   const acceptCall = useMutation(api.calls.accept);
   const rejectCall = useMutation(api.calls.reject);
   const [busy, setBusy] = useState(false);
@@ -80,11 +91,48 @@ const IncomingCallOverlay: React.FC = () => {
     }
   }, [token, incoming, busy, rejectCall]);
 
+  /**
+   * Reconcile the OS notification against the live query.
+   *
+   * The old version read `incoming` but depended on `incoming?._id`, so the first
+   * run - where `incoming` is still `undefined`, before the query has ever returned
+   * - cancelled every `call:*` notification in the tray. This component mounts on
+   * every sign-in, so a sign-in that raced an incoming call silently killed the
+   * ring.
+   */
   useEffect(() => {
-    if (!incoming) {
+    if (incomingId) {
+      return;
+    }
+    if (querySettled) {
       dismissAllCallNotifications();
     }
-  }, [incoming?._id]);
+  }, [incomingId, querySettled]);
+
+  /**
+   * Foreground de-duplication. This overlay is itself a full-screen ring UI driven
+   * by a live Convex query, so while the user is looking at the app the OS
+   * notification is a second copy of the same thing with a second Accept button -
+   * and the user had two racing ways to answer the same call.
+   *
+   * Only when the app is genuinely visible. The background path cannot use this
+   * test: a headless JS task has never seen a lifecycle callback, so
+   * `AppState.currentState` there is not evidence that anyone is looking.
+   */
+  useEffect(() => {
+    if (!incomingId) {
+      return;
+    }
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        dismissCallNotification(incomingId);
+      }
+    });
+    if (AppState.currentState === 'active') {
+      dismissCallNotification(incomingId);
+    }
+    return () => subscription.remove();
+  }, [incomingId]);
 
   useEffect(() => {
     if (!incomingId) {
@@ -149,14 +197,14 @@ const IncomingCallOverlay: React.FC = () => {
                 { backgroundColor: theme.color.extendedPrimary50 },
               ]}
             >
-              <Text style={[styles.avatarText, { color: theme.color.primary }]}>
-                {callerName
-                  .split(/\s+/)
-                  .filter(Boolean)
-                  .slice(0, 2)
-                  .map(part => part[0]?.toUpperCase() ?? '')
-                  .join('')}
-              </Text>
+              <UserAvatar
+                entity={incoming.caller}
+                name={callerName}
+                size={140}
+                variant="text"
+                labelStyle={styles.avatarText}
+                labelColor={theme.color.primary}
+              />
             </View>
           </View>
           <Text style={[styles.name, { color: theme.color.textPrimary }]}>

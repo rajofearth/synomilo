@@ -245,6 +245,11 @@ export const addMembers = mutation({
     if (!membership) {
       throw new ConvexError("Not a member of this conversation");
     }
+    // Previously any member could pull strangers into a group. Membership of the
+    // conversation is not authority to change its roster - only the owner may.
+    if (membership.role !== "owner") {
+      throw new ConvexError("Only the group owner can add members");
+    }
     const now = Date.now();
     const existing = await ctx.db
       .query("members")
@@ -384,6 +389,21 @@ export const leave = mutation({
     const me = await requireUser(ctx, token);
     const membership = await membershipFor(ctx, conversationId, me._id);
     if (membership) {
+      // An owner walking away orphaned the group with no way to reclaim it.
+      // Transfer ownership first; the UI routes owners into the transfer flow.
+      if (membership.role === "owner") {
+        const others = await ctx.db
+          .query("members")
+          .withIndex("by_conversation", (q) =>
+            q.eq("conversationId", conversationId),
+          )
+          .collect();
+        if (others.length > 1) {
+          throw new ConvexError(
+            "Transfer ownership to another member before leaving",
+          );
+        }
+      }
       await ctx.db.delete(membership._id);
     }
     return true;
@@ -412,6 +432,12 @@ export const typing = query({
   args: { token: v.string(), conversationId: v.id("conversations") },
   handler: async (ctx, { token, conversationId }) => {
     const me = await requireUser(ctx, token);
+    // Previously this read the whole `members` roster for ANY conversationId,
+    // leaking the typing roster of conversations the caller is not in.
+    const membership = await membershipFor(ctx, conversationId, me._id);
+    if (!membership) {
+      throw new ConvexError("Not a member of this conversation");
+    }
     const memberships = await ctx.db
       .query("members")
       .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))

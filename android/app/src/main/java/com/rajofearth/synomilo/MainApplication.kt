@@ -20,6 +20,7 @@ class MainApplication : Application(), ReactApplication {
               // add(MyReactNativePackage())
               add(DynamicColorPackage())
               add(InstallerPackage())
+              add(CallPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

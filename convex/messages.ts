@@ -90,7 +90,9 @@ export const list = query({
       let replyTo = null;
       if (msg.replyToId) {
         const original = await ctx.db.get(msg.replyToId);
-        if (original) {
+        // Defence in depth for rows written before the write-path fix: never
+        // surface a quoted body from outside this conversation.
+        if (original && original.conversationId === conversationId) {
           let replySenderName = "Unknown";
           const cached = senderCache.get(original.senderId);
           if (cached) {
@@ -212,6 +214,14 @@ export const send = mutation({
     }
     if (resolvedKind !== "text" && !storageId) {
       throw new ConvexError("Missing attachment");
+    }
+    // A replyToId from another conversation leaked its body into this one via the
+    // quote preview. Bind the reference to the conversation being written to.
+    if (replyToId) {
+      const original = await ctx.db.get(replyToId);
+      if (!original || original.conversationId !== conversationId) {
+        throw new ConvexError("Cannot reply to a message in another conversation");
+      }
     }
 
     const now = Date.now();

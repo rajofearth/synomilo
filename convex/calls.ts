@@ -3,7 +3,7 @@ import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { publicUser, requireUser } from "./lib/helpers";
+import { publicUser, pushTokensForUser, requireUser } from "./lib/helpers";
 
 const RING_TIMEOUT_MS = 60000;
 
@@ -47,14 +47,21 @@ export const start = mutation({
       .withIndex("by_caller", (q) => q.eq("callerId", me._id))
       .collect();
     for (const call of myRingingAsCaller) {
-      if (
-        (call.status === "ringing" || call.status === "active") &&
-        now - call.createdAt < RING_TIMEOUT_MS
-      ) {
+      // An `active` call blocks regardless of age. The previous check was
+      // `now - createdAt < RING_TIMEOUT_MS`, so a 5-minute-old active call
+      // passed the test and a second call row was inserted.
+      if (call.status === "active") {
         throw new ConvexError("You are already in a call");
       }
       if (call.status === "ringing") {
-        await ctx.db.patch(call._id, { status: "missed", endedAt: now });
+        if (now - call.createdAt < RING_TIMEOUT_MS) {
+          throw new ConvexError("You are already placing a call");
+        }
+        await ctx.db.patch(call._id, {
+          status: "missed",
+          endedAt: now,
+          endReason: "timeout",
+        });
       }
     }
     const myRingingAsCallee = await ctx.db
@@ -64,7 +71,11 @@ export const start = mutation({
       )
       .collect();
     for (const call of myRingingAsCallee) {
-      await ctx.db.patch(call._id, { status: "rejected", endedAt: now });
+      await ctx.db.patch(call._id, {
+        status: "rejected",
+        endedAt: now,
+        endReason: "declined",
+      });
     }
 
     const callId = await ctx.db.insert("calls", {
@@ -81,18 +92,25 @@ export const start = mutation({
       { callId },
     );
 
-    if (callee.pushToken) {
-      await ctx.scheduler.runAfter(0, internal.push.sendToTokens, {
-        tokens: [callee.pushToken],
-        title: me.displayName,
-        body: type === "video" ? "Incoming video call" : "Incoming voice call",
-        tag: `call:${callId}`,
-        channelId: "incoming_call_v2",
+    // DATA-ONLY push. A message carrying an FCM `notification` block is drawn
+    // by Play Services in the background, which bypasses the app entirely and
+    // produces the vague heads-up instead of a full-screen ring. The client's
+    // Notifee full-screen intent is the single owner of the ring.
+    const tokens = await pushTokensForUser(ctx, calleeId);
+    if (tokens.length === 0) {
+      console.warn(`call ${String(callId)}: callee has no push token registered`);
+    } else {
+      await ctx.scheduler.runAfter(0, internal.push.sendDataToTokens, {
+        tokens,
+        ttlMs: RING_TIMEOUT_MS,
         data: {
           type: "call",
+          callAction: "ring",
           callId: String(callId),
           callType: type,
           callerName: me.displayName,
+          ringExpiresAt: String(now + RING_TIMEOUT_MS),
+          serverNow: String(now),
         },
       });
     }
@@ -147,11 +165,44 @@ export const get = query({
       status: call.status,
       createdAt: call.createdAt,
       answeredAt: call.answeredAt ?? null,
+      endedAt: call.endedAt ?? null,
       role: call.callerId === me._id ? "caller" : "callee",
       peer: peer ? publicUser(peer) : null,
+      // Shipped with answeredAt/endedAt so the client can correct for the
+      // difference between the server clock and the device clock. Without it,
+      // `Date.now() - answeredAt` goes negative on any skewed device and the
+      // call duration renders as garbage (e.g. "-1:-3").
+      serverNow: Date.now(),
     };
   },
 });
+
+/**
+ * Best-effort "stop ringing" push. Without it a declined or timed-out call
+ * keeps ringing the other device for the full ring window, because no
+ * terminal push was ever sent.
+ */
+async function notifyPeerOfStop(
+  ctx: MutationCtx,
+  call: Doc<"calls">,
+  peerId: Id<"users">,
+  action: "cancelled" | "ended",
+): Promise<void> {
+  const tokens = await pushTokensForUser(ctx, peerId);
+  if (tokens.length === 0) {
+    return;
+  }
+  await ctx.scheduler.runAfter(0, internal.push.sendDataToTokens, {
+    tokens,
+    ttlMs: 30000,
+    data: {
+      type: "call",
+      callAction: action,
+      callId: String(call._id),
+      serverNow: String(Date.now()),
+    },
+  });
+}
 
 export const accept = mutation({
   args: { token: v.string(), callId: v.id("calls") },
@@ -161,11 +212,31 @@ export const accept = mutation({
     if (call.calleeId !== me._id) {
       throw new ConvexError("Only the person being called can accept");
     }
-    if (call.status !== "ringing") {
-      throw new ConvexError("This call is no longer ringing");
+    if (call.status === "active") {
+      // Answered on another device. Convex mutations are serialisable per
+      // document, so exactly one concurrent accept wins and the loser gets
+      // this instead of a spurious error toast.
+      return { ok: false as const, reason: "answered_elsewhere" as const };
     }
-    await ctx.db.patch(callId, { status: "active", answeredAt: Date.now() });
-    return true;
+    if (call.status !== "ringing") {
+      return {
+        ok: false as const,
+        reason: "not_ringing" as const,
+        status: call.status,
+      };
+    }
+    const busy = await ctx.db
+      .query("calls")
+      .withIndex("by_callee_status", (q) =>
+        q.eq("calleeId", me._id).eq("status", "active"),
+      )
+      .first();
+    if (busy) {
+      throw new ConvexError("You are already in a call");
+    }
+    const now = Date.now();
+    await ctx.db.patch(callId, { status: "active", answeredAt: now });
+    return { ok: true as const, answeredAt: now, serverNow: now };
   },
 });
 
@@ -178,7 +249,18 @@ export const reject = mutation({
       throw new ConvexError("Only the person being called can decline");
     }
     if (call.status === "ringing") {
-      await ctx.db.patch(callId, { status: "rejected", endedAt: Date.now() });
+      const now = Date.now();
+      await ctx.db.patch(callId, {
+        status: "rejected",
+        endedAt: now,
+        endReason: "declined",
+      });
+      await notifyPeerOfStop(
+        ctx,
+        call,
+        call.callerId,
+        "cancelled",
+      );
     }
     return true;
   },
@@ -189,7 +271,12 @@ export const markTimedOut = internalMutation({
   handler: async (ctx, { callId }) => {
     const call = await ctx.db.get(callId);
     if (call && call.status === "ringing") {
-      await ctx.db.patch(callId, { status: "missed", endedAt: Date.now() });
+      await ctx.db.patch(callId, {
+        status: "missed",
+        endedAt: Date.now(),
+        endReason: "timeout",
+      });
+      await notifyPeerOfStop(ctx, call, call.calleeId, "cancelled");
     }
   },
 });
@@ -200,48 +287,76 @@ export const end = mutation({
     const me = await requireUser(ctx, token);
     const call = await loadCall(ctx, callId);
     assertParticipant(call, me._id);
+    const now = Date.now();
+    const peerId = call.callerId === me._id ? call.calleeId : call.callerId;
     if (call.status === "ringing") {
+      const cancelled = call.callerId === me._id;
       await ctx.db.patch(callId, {
-        status: call.callerId === me._id ? "missed" : "rejected",
-        endedAt: Date.now(),
+        status: cancelled ? "missed" : "rejected",
+        endedAt: now,
+        endReason: cancelled ? "timeout" : "declined",
       });
+      await notifyPeerOfStop(ctx, call, peerId, "cancelled");
     } else if (call.status === "active") {
-      await ctx.db.patch(callId, { status: "ended", endedAt: Date.now() });
+      await ctx.db.patch(callId, { status: "ended", endedAt: now, endReason: "hangup" });
+      await notifyPeerOfStop(ctx, call, peerId, "ended");
     }
     return true;
   },
 });
 
 export const history = query({
-  args: { token: v.string() },
-  handler: async (ctx, { token }) => {
+  args: { token: v.string(), before: v.optional(v.number()), limit: v.optional(v.number()) },
+  handler: async (ctx, { token, before, limit }) => {
     const me = await requireUser(ctx, token);
-    const asCaller = await ctx.db
-      .query("calls")
-      .withIndex("by_caller", (q) => q.eq("callerId", me._id))
-      .collect();
-    const asCallee = await ctx.db
-      .query("calls")
-      .withIndex("by_callee", (q) => q.eq("calleeId", me._id))
-      .collect();
-    const all = [...asCaller, ...asCallee]
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 100);
+    const take = Math.min(limit ?? 50, 100);
     const rows = [];
-    for (const call of all) {
-      const peerId =
-        call.callerId === me._id ? call.calleeId : call.callerId;
-      const peer = await ctx.db.get(peerId);
-      rows.push({
-        _id: call._id,
-        type: call.type,
-        status: call.status,
-        createdAt: call.createdAt,
-        direction: call.callerId === me._id ? "outgoing" : "incoming",
-        peer: peer ? publicUser(peer) : null,
-      });
+    let cursor = before;
+    // Paged over `by_createdAt` (newest first) with both roles merged, so the
+    // list no longer hard-caps at 100 and stops loading a user's older calls.
+    while (rows.length < take) {
+      const batch = await ctx.db
+        .query("calls")
+        .withIndex("by_createdAt", (q) =>
+          cursor === undefined ? q : q.lt("createdAt", cursor),
+        )
+        .order("desc")
+        .take(take * 2);
+      if (batch.length === 0) {
+        break;
+      }
+      cursor = batch[batch.length - 1].createdAt;
+      for (const call of batch) {
+        if (call.callerId !== me._id && call.calleeId !== me._id) {
+          continue;
+        }
+        const peerId =
+          call.callerId === me._id ? call.calleeId : call.callerId;
+        const peer = await ctx.db.get(peerId);
+        rows.push({
+          _id: call._id,
+          type: call.type,
+          status: call.status,
+          createdAt: call.createdAt,
+          answeredAt: call.answeredAt ?? null,
+          endedAt: call.endedAt ?? null,
+          endReason: call.endReason ?? null,
+          durationMs:
+            call.answeredAt && call.endedAt
+              ? Math.max(0, call.endedAt - call.answeredAt)
+              : null,
+          direction: call.callerId === me._id ? "outgoing" : "incoming",
+          peer: peer ? publicUser(peer) : null,
+        });
+        if (rows.length >= take) {
+          break;
+        }
+      }
+      if (batch.length < take * 2) {
+        break;
+      }
     }
-    return rows;
+    return { calls: rows, hasMore: rows.length >= take, cursor: cursor ?? null };
   },
 });
 

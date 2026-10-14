@@ -28,7 +28,7 @@ export type RootStackParamList = {
   };
   ChatInfo: { conversationId: string; title?: string };
   ContactInfo: { conversationId: string };
-  Profile: undefined;
+  AddContact: undefined;
   Settings: undefined;
   AppCredentials: undefined;
   SampleUser: undefined;
@@ -80,8 +80,6 @@ export type RootStackParamList = {
   CallDetails: {
     call: any;
   };
-  Users: undefined;
-  Groups: undefined;
   SavedMessages: undefined;
   PinnedMessages: { user?: any; group?: any } | undefined;
   QRScreen: undefined;
@@ -90,6 +88,39 @@ export type RootStackParamList = {
 export type BottomTabParamList = {
   Chats: undefined;
   Calls: undefined;
-  Users: undefined;
-  Groups: undefined;
+  Profile: undefined;
 };
+
+/**
+ * TODO(dead-route audit) — candidates for removal, NOT removed here on purpose.
+ *
+ * Screens outside this module's ownership are being deleted as part of a cleanup pass, and
+ * removing a route type before its screen is gone breaks `Stack.Screen` registration for
+ * everyone. Each entry below was cross-checked against `RootStackNavigator.tsx` and a
+ * repo-wide grep for `navigate(SCREEN_CONSTANTS.X)` / `navigate('X')`; "registered" means a
+ * `<Stack.Screen name={...}>` still exists, "referenced" means some file still navigates
+ * to it.
+ *
+ * Confirm against the screen list AFTER the deletion pass, then delete in one go.
+ *
+ * 1. `BannedMembers` — registered: NO. `SCREEN_CONSTANTS.BANNED_MEMBER` is `'BannedMember'`
+ *    (singular), which IS registered and IS navigated to. This plural key is a leftover.
+ *    Referenced: 0. Safe to delete.
+ * 2. `Conversation`, `CreateConversation`, `UserInfo`, `GroupInfo`, `SearchMessages`,
+ *    `QRScreen`, `AIAgents`, `CallLogs`, `CallDetails`, `SavedMessages`, `PinnedMessages`,
+ *    `Settings`, `ChatInfo`, `ContactInfo` — registered: YES,
+ *    `navigate()` referenced: 0 from a grep of `src/`. These screens are CometChat-era
+ *    surfaces that the Convex rewrite may have left unreachable, but each is still mounted
+ *    in `RootStackNavigator`, so the type must stay until the screen is removed.
+ *    (`Users`, `Groups` and the stack-level `Profile` are NOT in this list any more: they
+ *    were removed with the three-tab restructure — `Profile` survives as a tab route on
+ *    `BottomTabParamList` instead.)
+ * 3. `OngoingCallScreen` — registered and referenced once. Verify the caller before
+ *    touching it; the calls rewrite may have replaced it with `CallScreen`.
+ * 4. `CallType` — exported type used by `OngoingCallScreen` params only. Folds away with it.
+ *
+ * Everything else (`Login`, `SignUp`, `BottomTabNavigator`, `Messages`, `ThreadView`,
+ * `ForwardMessage`, `AddMember`, `BannedMember`, `ViewMembers`,
+ * `TransferOwnershipSection`, `CallScreen`, `AppCredentials`, `SampleUser`) is either
+ * actively navigated to or is load-bearing for the auth flow.
+ */

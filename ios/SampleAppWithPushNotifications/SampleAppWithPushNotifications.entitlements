@@ -2,7 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Resolved per build configuration from project.pbxproj:
+	    Debug   -> APS_ENVIRONMENT = development
+	    Release -> APS_ENVIRONMENT = production
+
+	  It used to be the literal `development` here, which means every build signed
+	  against the development APNs endpoint - including TestFlight/App Store builds.
+	  A production backend dialling a development-environment token gets silence, so
+	  calls simply never rang on a released build.
+	-->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>$(APS_ENVIRONMENT)</string>
 </dict>
 </plist>

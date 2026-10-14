@@ -11,24 +11,35 @@ import {
   BottomTabBarButtonProps,
 } from '@react-navigation/bottom-tabs';
 import { useTheme as usePaperTheme } from 'react-native-paper';
-import { useCometChatTranslation } from '@cometchat/chat-uikit-react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
-import { SCREEN_CONSTANTS } from '../utils/AppConstants';
 import { useIsKeyboardVisible } from '../hooks/useIsKeyboardVisible';
 import Conversations from '../components/convex/ConversationsList';
 import Calls from '../components/calls/Calls';
-import Users from '../components/convex/UsersList';
+import Profile from '../components/convex/ProfileScreen';
 import { BottomTabParamList } from './types';
-import { useConfig } from '../config/store';
 
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
 type TabIconName = 'chat-outline' | 'phone-outline' | 'account-outline';
 
-const icons: Record<string, TabIconName> = {
+const icons: Record<keyof BottomTabParamList, TabIconName> = {
   Chats: 'chat-outline',
   Calls: 'phone-outline',
-  Users: 'account-outline',
+  Profile: 'account-outline',
+};
+
+/**
+ * Tab labels are literal, not translated.
+ *
+ * This used to be `t(route.name.toUpperCase())` against the CometChat i18n bundle.
+ * That bundle has `CHATS` and `CALLS` but no `PROFILE`, and `CometChatLocalizationHelper`
+ * returns the key itself when a lookup misses — so adding Profile as a tab would have
+ * rendered the label as a shouted `PROFILE` sitting under two sentence-case siblings.
+ */
+const labels: Record<keyof BottomTabParamList, string> = {
+  Chats: 'Chats',
+  Calls: 'Calls',
+  Profile: 'Profile',
 };
 
 const CustomTabBarButton = ({ children, onPress }: BottomTabBarButtonProps) => (
@@ -81,22 +92,30 @@ const TabIcon = ({ focused, name }: TabIconProps) => {
   );
 };
 
-const TAB_COMPONENTS: Record<
-  string,
-  { name: string; component: React.ComponentType<any> }
-> = {
-  chats: { name: SCREEN_CONSTANTS.CHATS, component: Conversations },
-  calls: { name: SCREEN_CONSTANTS.CALLS, component: Calls },
-  users: { name: SCREEN_CONSTANTS.USERS, component: Users },
-};
+/**
+ * The tab set is fixed, and that is the point.
+ *
+ * This used to read `settings.layout.tabs` out of the no-code config store and map it
+ * over a `TAB_COMPONENTS` record, silently dropping any key with no component behind
+ * it. In practice the store shipped `groups`, which had no entry, so the
+ * "configurable" tab bar was a fixed three-tab bar wearing a filter as a disguise —
+ * and the filter was the only thing the config could actually influence. `Groups` and
+ * `Users` are gone now (groups are gone from the app; the user directory became the
+ * Add Contact screen and Profile became a tab), so the store lookup is gone with them.
+ * `settings.layout` still exists for `compactMessageComposer`, which ThreadView reads.
+ */
+const TABS: {
+  name: keyof BottomTabParamList;
+  component: React.ComponentType<any>;
+}[] = [
+  { name: 'Chats', component: Conversations },
+  { name: 'Calls', component: Calls },
+  { name: 'Profile', component: Profile },
+];
 
 const BottomTabNavigator = () => {
   const paper = usePaperTheme();
-  const tabs = useConfig(state => state.settings.layout.tabs);
-  const { t } = useCometChatTranslation();
   const isKeyboardVisible = useIsKeyboardVisible();
-
-  const visibleTabs = tabs.filter(key => key.toLowerCase() !== 'groups');
 
   return (
     <Tab.Navigator
@@ -113,13 +132,9 @@ const BottomTabNavigator = () => {
               },
             ],
         animation: 'none',
-        tabBarIcon: ({ focused }) => {
-          const iconName = icons[route.name];
-          if (!iconName) {
-            return null;
-          }
-          return <TabIcon focused={focused} name={iconName} />;
-        },
+        tabBarIcon: ({ focused }) => (
+          <TabIcon focused={focused} name={icons[route.name]} />
+        ),
         tabBarShowLabel: true,
         tabBarLabel: ({ focused }) => (
           <Text
@@ -133,22 +148,19 @@ const BottomTabNavigator = () => {
               },
             ]}
           >
-            {t(route.name.toUpperCase())}
+            {labels[route.name]}
           </Text>
         ),
         tabBarButton: props => <CustomTabBarButton {...props} />,
       })}
     >
-      {visibleTabs.map(tabKey => {
-        const tab = TAB_COMPONENTS[tabKey.toLowerCase()];
-        return tab ? (
-          <Tab.Screen
-            key={tab.name}
-            name={tab.name as keyof BottomTabParamList}
-            component={tab.component}
-          />
-        ) : null;
-      })}
+      {TABS.map(tab => (
+        <Tab.Screen
+          key={tab.name}
+          name={tab.name}
+          component={tab.component}
+        />
+      ))}
     </Tab.Navigator>
   );
 };

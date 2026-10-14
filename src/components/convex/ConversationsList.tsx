@@ -1,24 +1,21 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
-  TouchableOpacity,
   Pressable,
   FlatList,
   ActivityIndicator,
   Alert,
-  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Dialog, FAB, Portal } from 'react-native-paper';
+import { Button, Dialog, Portal, Text, useTheme } from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useQuery, useMutation } from 'convex/react';
 import dayjs from 'dayjs';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from './UserAvatar';
 
 type ConversationRow = {
   _id: string;
@@ -46,16 +43,8 @@ const formatTime = (ts: number): string => {
   return d.format('MMM D, YYYY');
 };
 
-const initialsFor = (name: string): string =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase() ?? '')
-    .join('');
-
 const ConversationsList = ({ navigation }: any) => {
-  const theme = useTheme();
+  const { colors } = useTheme();
   const { token, user } = useSession();
   const conversations = useQuery(
     api.conversations.list,
@@ -105,66 +94,87 @@ const ConversationsList = ({ navigation }: any) => {
 
   return (
     <SafeAreaView
-      style={[styles.container, { backgroundColor: theme.color.background2 }]}
+      style={[styles.container, { backgroundColor: colors.background }]}
       edges={['top']}
     >
+      {/**
+       * Two actions, deliberately: "+" starts a conversation, the avatar is you.
+       * They used to be a title, an avatar and a FAB over the list, which meant
+       * the primary action floated over a row and was easy to hit by accident.
+       */}
       <View style={styles.header}>
-        <Text
-          style={[
-            theme.typography.heading1.bold,
-            { color: theme.color.textPrimary },
-          ]}
-        >
-          Chats
-        </Text>
-        <TouchableOpacity
-          style={[
+        <Pressable
+          style={({ pressed }) => [
             styles.avatarButton,
-            { backgroundColor: theme.color.primary },
+            {
+              backgroundColor: colors.surfaceVariant,
+              opacity: pressed ? 0.6 : 1,
+            },
           ]}
+          accessibilityRole="button"
+          accessibilityLabel="Open your profile"
           onPress={() => navigation.navigate('Profile')}
         >
-          <Text style={styles.avatarText}>
-            {initialsFor(user?.displayName ?? '?')}
-          </Text>
-        </TouchableOpacity>
+          <UserAvatar
+            entity={user}
+            name={user?.displayName}
+            size={36}
+            variant="text"
+            labelStyle={styles.avatarText}
+            labelColor={colors.onSurfaceVariant}
+          />
+        </Pressable>
+
+        <Text variant="headlineMedium" style={styles.headerTitle}>
+          Chats
+        </Text>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.iconButton,
+            {
+              backgroundColor: colors.primary,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Start a new chat"
+          hitSlop={8}
+          onPress={() => navigation.navigate('AddContact')}
+        >
+          <MaterialDesignIcons
+            name="plus"
+            size={26}
+            color={colors.onPrimary}
+          />
+        </Pressable>
       </View>
 
       {conversations === undefined ? (
         <View style={styles.center}>
-          <ActivityIndicator color={theme.color.primary} />
+          <ActivityIndicator color={colors.onSurfaceVariant} />
         </View>
       ) : data.length === 0 ? (
         <View style={styles.center}>
-          <Text
-            style={[
-              theme.typography.heading3.bold,
-              { color: theme.color.textPrimary },
-            ]}
-          >
+          <Text variant="headlineSmall" style={styles.emptyTitle}>
             No conversations yet
           </Text>
           <Text
-            style={[
-              theme.typography.body.medium,
-              styles.emptyHint,
-              { color: theme.color.textSecondary },
-            ]}
+            variant="bodyMedium"
+            style={[styles.emptyHint, { color: colors.onSurfaceVariant }]}
           >
-            Start a chat from the Users tab, or create a group.
+            Tap + to find someone by username and start a chat.
           </Text>
         </View>
       ) : (
         <FlatList
           data={data}
           keyExtractor={item => item._id}
-          onRefresh={() => {}}
-          refreshing={false}
           renderItem={({ item }) => (
             <Pressable
               style={({ pressed }) => [
                 styles.row,
-                pressed && { backgroundColor: theme.color.background3 },
+                pressed && { backgroundColor: colors.surfaceVariant },
               ]}
               onPress={() => openChat(item)}
               onLongPress={() => confirmLeave(item)}
@@ -173,45 +183,34 @@ const ConversationsList = ({ navigation }: any) => {
                 style={[
                   styles.rowAvatar,
                   item.type === 'group' && styles.rowAvatarGroup,
-                  { backgroundColor: theme.color.extendedPrimary50 },
+                  { backgroundColor: colors.surfaceVariant },
                 ]}
               >
-                {item.avatarUrl ? (
-                  <Image
-                    source={{ uri: item.avatarUrl }}
-                    style={[
-                      styles.rowAvatarImage,
-                      item.type === 'group' && styles.rowAvatarImageGroup,
-                    ]}
-                  />
-                ) : (
-                  <Text
-                    style={[
-                      styles.rowAvatarInitials,
-                      { color: theme.color.primary },
-                    ]}
-                  >
-                    {initialsFor(item.title)}
-                  </Text>
-                )}
+                <UserAvatar
+                  entity={item}
+                  name={item.title}
+                  size={52}
+                  variant="text"
+                  shape={item.type === 'group' ? 'rounded' : 'circle'}
+                  labelStyle={styles.rowAvatarInitials}
+                  labelColor={colors.onSurfaceVariant}
+                />
               </View>
               <View style={styles.rowBody}>
                 <View style={styles.rowTop}>
                   <Text
                     numberOfLines={1}
+                    variant="titleSmall"
                     style={[
-                      theme.typography.body.medium,
                       styles.rowTitle,
-                      { color: theme.color.textPrimary },
+                      { color: colors.onSurface },
                     ]}
                   >
                     {item.title}
                   </Text>
                   <Text
-                    style={[
-                      theme.typography.caption1.regular,
-                      { color: theme.color.textSecondary },
-                    ]}
+                    variant="labelSmall"
+                    style={{ color: colors.onSurfaceVariant }}
                   >
                     {formatTime(item.lastMessageAt)}
                   </Text>
@@ -220,25 +219,22 @@ const ConversationsList = ({ navigation }: any) => {
                   {item.typingName ? (
                     <Text
                       numberOfLines={1}
-                      style={[
-                        theme.typography.caption1.regular,
-                        styles.rowPreview,
-                        { color: theme.color.primary },
-                      ]}
+                      variant="bodySmall"
+                      style={[styles.rowPreview, { color: colors.onSurface }]}
                     >
                       {item.typingName} is typing…
                     </Text>
                   ) : (
                     <Text
                       numberOfLines={1}
+                      variant="bodySmall"
                       style={[
-                        theme.typography.caption1.regular,
                         styles.rowPreview,
                         {
                           color:
                             item.unreadCount > 0
-                              ? theme.color.textPrimary
-                              : theme.color.textSecondary,
+                              ? colors.onSurface
+                              : colors.onSurfaceVariant,
                         },
                       ]}
                     >
@@ -247,12 +243,12 @@ const ConversationsList = ({ navigation }: any) => {
                   )}
                   {item.unreadCount > 0 && (
                     <View
-                      style={[
-                        styles.badge,
-                        { backgroundColor: theme.color.primary },
-                      ]}
+                      style={[styles.badge, { backgroundColor: colors.primary }]}
                     >
-                      <Text style={styles.badgeText}>
+                      <Text
+                        variant="labelSmall"
+                        style={{ color: colors.onPrimary }}
+                      >
                         {item.unreadCount > 99 ? '99+' : item.unreadCount}
                       </Text>
                     </View>
@@ -263,48 +259,26 @@ const ConversationsList = ({ navigation }: any) => {
           )}
         />
       )}
-      <FAB
-        variant="primary"
-        style={styles.fab}
-        icon={({ size, color }) => (
-          <MaterialDesignIcons
-            name="account-group-outline"
-            size={size}
-            color={color}
-          />
-        )}
-        onPress={() => navigation.navigate('Groups')}
-      />
+
       <Portal>
         <Dialog
           visible={leaveTarget != null}
           onDismiss={dismissLeave}
-          style={[styles.dialog, { backgroundColor: theme.color.background2 }]}
+          style={{ backgroundColor: colors.elevation.level3 }}
         >
-          <Dialog.Title style={{ color: theme.color.textPrimary }}>
+          <Dialog.Title style={{ color: colors.onSurface }}>
             Leave conversation
           </Dialog.Title>
           <Dialog.Content>
-            <Text
-              style={[
-                theme.typography.body.medium,
-                { color: theme.color.textSecondary },
-              ]}
-            >
+            <Text style={{ color: colors.onSurfaceVariant }}>
               {leaveTarget ? `Leave "${leaveTarget.title}"?` : ''}
             </Text>
           </Dialog.Content>
           <Dialog.Actions>
-            <Button
-              onPress={dismissLeave}
-              textColor={theme.color.primary as string}
-            >
+            <Button onPress={dismissLeave} textColor={colors.onSurfaceVariant}>
               Cancel
             </Button>
-            <Button
-              onPress={performLeave}
-              textColor={theme.color.error as string}
-            >
+            <Button onPress={performLeave} textColor={colors.onSurface}>
               Leave
             </Button>
           </Dialog.Actions>
@@ -324,37 +298,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
+  headerTitle: {
+    flex: 1,
+  },
   avatarButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  menu: {
-    position: 'absolute',
-    top: 64,
-    right: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    zIndex: 10,
-    minWidth: 200,
-  },
-  menuName: {
-    marginBottom: 8,
-  },
-  menuItem: {
-    paddingVertical: 8,
   },
   center: {
     flex: 1,
@@ -362,9 +329,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 32,
   },
+  emptyTitle: {
+    marginBottom: 8,
+    textAlign: 'center',
+  },
   emptyHint: {
     textAlign: 'center',
-    marginTop: 8,
   },
   row: {
     flexDirection: 'row',
@@ -385,14 +355,6 @@ const styles = StyleSheet.create({
   rowAvatarGroup: {
     borderRadius: 16,
   },
-  rowAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 26,
-  },
-  rowAvatarImageGroup: {
-    borderRadius: 16,
-  },
   rowAvatarInitials: {
     fontSize: 18,
     fontWeight: '700',
@@ -406,10 +368,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   rowTitle: {
     flex: 1,
-    marginRight: 8,
   },
   rowBottom: {
     flexDirection: 'row',
@@ -428,19 +390,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    borderRadius: 20,
-  },
-  dialog: {
-    borderRadius: 28,
   },
 });

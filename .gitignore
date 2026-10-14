@@ -89,3 +89,18 @@ build-install.log
 
 # Convex CLI state
 .convex/
+
+# Signing keys (never commit - a release .jks in git lets anyone sign updates)
+*.jks
+*.p12
+*.keystore
+!android/app/debug.keystore
+
+# Local audit/verification scratch
+.verify-tmp/
+.audit-baseline-tsc.txt
+
+# Stray build/dev logs and screenshots
+*.log
+screen*.png
+.bundle/

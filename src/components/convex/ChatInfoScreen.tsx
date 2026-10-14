@@ -8,7 +8,6 @@ import { launchImageLibrary } from 'react-native-image-picker';
 import {
   ActivityIndicator,
   Appbar,
-  Avatar,
   Button,
   Checkbox,
   Chip,
@@ -26,6 +25,7 @@ import MaterialDesignIcons from '@react-native-vector-icons/material-design-icon
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from './UserAvatar';
 
 const THUMB_SIZE = Dimensions.get('window').width / 3 - 8;
 const PHOTO_LIMIT = 9;
@@ -39,9 +39,6 @@ const formatBytes = (bytes: number | null): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
-
-const initialsFor = (name: string): string =>
-  name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('');
 
 const uriToBlob = (uri: string): Promise<Blob> =>
   new Promise((resolve, reject) => {
@@ -419,7 +416,15 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
       style={styles.row}
       left={() => (
         <View style={styles.rowAvatar}>
-          <Avatar.Text size={40} label={initialsFor(member.displayName).toUpperCase()} color={c.textPrimary} style={{ backgroundColor: c.extendedPrimary50 }} />
+          <UserAvatar
+            entity={member}
+            name={member.displayName}
+            size={40}
+            variant="paper"
+            imageStyle={styles.rowAvatarImage}
+            initialsStyle={{ backgroundColor: c.extendedPrimary50 }}
+            labelColor={c.textPrimary as string}
+          />
         </View>
       )}
       right={
@@ -453,19 +458,24 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
             <View style={styles.heroAvatarWrap}>
-              {isGroup && groupAvatarUrl ? (
-                <Image source={{ uri: groupAvatarUrl }} style={styles.heroAvatarImage} />
-              ) : (
-                <Avatar.Text
-                  size={80}
-                  label={initialsFor(title).toUpperCase()}
-                  color={c.textPrimary}
-                  style={{
-                    backgroundColor: c.extendedPrimary50,
-                    borderRadius: isGroup ? 24 : 40,
-                  }}
-                />
-              )}
+              {/* `groupAvatarUrl` is correct for BOTH cases: `conversations.get`
+                  writes the uploaded group photo for a group and the other
+                  user's `avatarUrl` for a DM. The old `isGroup &&` guard threw
+                  the DM's avatar away. The resolver rejects a blank URL, so the
+                  initials branch still covers the no-photo case. */}
+              <UserAvatar
+                entity={{ avatarUrl: groupAvatarUrl }}
+                name={title}
+                size={80}
+                variant="paper"
+                shape={isGroup ? 'rounded' : 'circle'}
+                imageStyle={styles.heroAvatarImage}
+                initialsStyle={{
+                  backgroundColor: c.extendedPrimary50,
+                  borderRadius: isGroup ? 24 : 40,
+                }}
+                labelColor={c.textPrimary as string}
+              />
               {isOwner && (
                 <TouchableOpacity
                   style={[
@@ -690,6 +700,18 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
                   return (
                     <TouchableOpacity key={item._id} style={styles.addRow} activeOpacity={0.7} onPress={() => toggleAdd(item._id)}>
                       <Checkbox status={selected ? 'checked' : 'unchecked'} onPress={() => toggleAdd(item._id)} color={colors.primary} />
+                      <UserAvatar
+                        entity={item}
+                        name={item.displayName}
+                        size={36}
+                        variant="text"
+                        containerStyle={[
+                          styles.addRowAvatar,
+                          { backgroundColor: c.extendedPrimary50 },
+                        ]}
+                        labelStyle={styles.addRowInitials}
+                        labelColor={c.primary}
+                      />
                       <View style={styles.addRowBody}>
                         <Text style={[theme.typography.body.medium, { color: colors.onSurface }]}>{item.displayName}</Text>
                         <Text style={[theme.typography.caption1.regular, { color: colors.onSurfaceVariant }]}>@{item.username}</Text>
@@ -754,6 +776,7 @@ const styles = StyleSheet.create({
   row: { paddingVertical: 4 },
   rowIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   rowAvatar: { justifyContent: 'center', marginLeft: 4, marginRight: 4 },
+  rowAvatarImage: { width: 40, height: 40, borderRadius: 20 },
   ownerChip: { alignSelf: 'center' },
   divider: { marginBottom: 4 },
   seeAll: { alignSelf: 'center' },
@@ -768,6 +791,8 @@ const styles = StyleSheet.create({
   sheetList: { maxHeight: 320 },
   sheetState: { paddingVertical: 32, alignItems: 'center' },
   addRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  addRowAvatar: { marginLeft: 8, marginRight: 4 },
+  addRowInitials: { fontSize: 13, fontWeight: '700' },
   addRowBody: { flex: 1, marginLeft: 4 },
   sheetActions: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 12 },
 });

@@ -7,7 +7,10 @@ export const AppConstants = {
   appId: '1683794f9fd14c574',
   region: 'IN',
   subscriptionType: 'ALL_USERS',
-  versionNumber: 'V5.5.1',
+  // Display-only. The updater compares against the APK's `versionName` from
+  // android/app/build.gradle, not this value - this was stale at V5.5.1 and
+  // showed a wrong version in Profile and Settings.
+  versionNumber: '1.0.7',
   webClientId:
     '',
   iosClientId:

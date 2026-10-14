@@ -10,7 +10,6 @@ import {
   Alert,
   Modal,
   Pressable,
-  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@cometchat/chat-uikit-react-native';
@@ -19,6 +18,7 @@ import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import UserAvatar from './UserAvatar';
 
 type GroupRow = {
   _id: string;
@@ -34,15 +34,8 @@ type UserRow = {
   _id: string;
   username: string;
   displayName: string;
+  avatarUrl: string | null;
 };
-
-const initialsFor = (name: string): string =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase() ?? '')
-    .join('');
 
 const GroupsList = ({ navigation }: any) => {
   const theme = useTheme();
@@ -181,28 +174,19 @@ const GroupsList = ({ navigation }: any) => {
                 })
               }
             >
-              {item.avatarUrl ? (
-                <Image
-                  source={{ uri: item.avatarUrl }}
-                  style={styles.groupAvatar}
-                />
-              ) : (
-                <View
-                  style={[
-                    styles.groupAvatar,
-                    { backgroundColor: theme.color.extendedPrimary50 },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.groupInitials,
-                      { color: theme.color.primary },
-                    ]}
-                  >
-                    {initialsFor(item.title)}
-                  </Text>
-                </View>
-              )}
+              <UserAvatar
+                entity={item}
+                name={item.title}
+                size={52}
+                variant="text"
+                shape="rounded"
+                containerStyle={[
+                  styles.groupAvatar,
+                  { backgroundColor: theme.color.extendedPrimary50 },
+                ]}
+                labelStyle={styles.groupInitials}
+                labelColor={theme.color.primary}
+              />
               <View style={styles.rowBody}>
                 <Text
                   style={[
@@ -304,6 +288,18 @@ const GroupsList = ({ navigation }: any) => {
                         />
                       )}
                     </View>
+                    <UserAvatar
+                      entity={item}
+                      name={item.displayName}
+                      size={34}
+                      variant="text"
+                      containerStyle={[
+                        styles.memberAvatar,
+                        { backgroundColor: theme.color.extendedPrimary50 },
+                      ]}
+                      labelStyle={styles.memberInitials}
+                      labelColor={theme.color.primary}
+                    />
                     <Text
                       style={[
                         theme.typography.body.medium,
@@ -407,6 +403,13 @@ const styles = StyleSheet.create({
   },
   groupInitials: {
     fontSize: 18,
+    fontWeight: '700',
+  },
+  memberAvatar: {
+    marginRight: 12,
+  },
+  memberInitials: {
+    fontSize: 13,
     fontWeight: '700',
   },
   rowBody: {

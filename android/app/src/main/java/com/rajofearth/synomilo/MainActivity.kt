@@ -1,4 +1,6 @@
 package com.rajofearth.synomilo
+
+import android.content.Intent
 import android.os.Bundle
 
 import com.facebook.react.ReactActivity
@@ -11,7 +13,22 @@ class MainActivity : ReactActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
     // REQUIRED for react-native-screens
     super.onCreate(null)
+        // A cold start launched by IncomingCallActivity carries the Accept/Decline
+        // decision. Publish it before the JS bridge exists so takeLaunchIntent()
+        // can find it the moment the bundle has run.
+        CallIntentMailbox.publish(intent)
   }
+
+    /**
+     * MainActivity is singleTask, so every launch from the ring screen while the app
+     * is already alive lands here rather than in onCreate. Without this the Accept
+     * button on the lock screen did nothing at all while the app was running.
+     */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        CallIntentMailbox.publish(newIntent)
+    }
 
 
   /**

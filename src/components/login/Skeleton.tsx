@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { Animated, Dimensions, Easing, StyleSheet, useColorScheme, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 // import { useThemeInternal } from "../../../theme/hook";
@@ -52,8 +52,7 @@ const SkeletonBox = ({ index, boxSize, gradientColors }: any) => {
 
 export const Skeleton = () => {
   const animatedValue = useRef(new Animated.Value(0)).current;
-  const [isLoading, setIsLoading] = useState(true);
-  const  mode  = useColorScheme();
+  const mode = useColorScheme();
 
   // Define static colors
   const color = {
@@ -81,36 +80,37 @@ export const Skeleton = () => {
     skeletonStyle;
 
   useEffect(() => {
-    const startShimmer = () => {
-      animatedValue.setValue(0);
-      Animated.loop(
-        Animated.timing(animatedValue, {
-          toValue: 1,
-          duration: (1 / speed) * 1000,
-          easing: Easing.linear,
-          useNativeDriver: false,
-        })
-      ).start();
+    animatedValue.setValue(0);
+    /**
+     * `Animated.loop(...).start()` returns a handle that has to be stopped on unmount.
+     * Without it the loop keeps driving a native animation for a screen that is gone, and
+     * every visit stacked another one on top.
+     *
+     * There is also no artificial "simulate 3 seconds of loading" timer any more: it was a
+     * fixed delay that hid real content on a fast connection, and on a failed fetch it
+     * ended with `return null` while the caller still believed the skeleton was showing —
+     * a permanent grey box. The caller decides when loading is done; this just renders
+     * while it is.
+     */
+    const shimmer = Animated.loop(
+      Animated.timing(animatedValue, {
+        toValue: 1,
+        duration: (1 / speed) * 1000,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }),
+    );
+    shimmer.start();
+
+    return () => {
+      shimmer.stop();
     };
-
-    startShimmer();
-
-    // Simulate a loading time of 3 seconds
-    const loadData = setTimeout(() => {
-      setIsLoading(false);
-    }, 3000);
-
-    return () => clearTimeout(loadData);
   }, [animatedValue, speed]);
 
   const shimmerTranslateX = animatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [-screenWidth, screenWidth],
   });
-
-  if (!isLoading) {
-    return null;
-  }
 
   const boxSize = (screenWidth - 22) / 3;
   const shimmerWidth = screenWidth;

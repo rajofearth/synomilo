@@ -21,7 +21,14 @@ import {
 import {SCREEN_CONSTANTS} from '../../utils/AppConstants';
 import { useConfig } from '../../config/store';
 
-type GroupNavigationProp = StackNavigationProp<RootStackParamList, 'Groups'>;
+/**
+ * Dead file — this was never the `Groups` route (that pointed at
+ * `src/components/convex/GroupsList`), and group creation is gone from the app now.
+ *
+ * The nav prop is no longer pinned to a route name because `RootStackParamList` no
+ * longer has a `Groups` key. Delete this file.
+ */
+type GroupNavigationProp = StackNavigationProp<RootStackParamList>;
 
 interface GroupsProps {
   hideHeader?: boolean;
