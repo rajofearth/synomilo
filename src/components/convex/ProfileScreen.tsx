@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,7 +8,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMutation, useQuery } from 'convex/react';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
-import DeviceInfo from 'react-native-device-info';
 import { launchImageLibrary } from 'react-native-image-picker';
 import {
   ActivityIndicator,
@@ -26,10 +24,6 @@ import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
 import UserAvatar from './UserAvatar';
-
-const GITHUB_URL = 'https://github.com/rajofearth';
-const SOURCE_URL = 'https://github.com/rajofearth/synomilo';
-const EMAIL_URL = 'mailto:rajofearth@proton.me';
 
 const uriToBlob = (uri: string): Promise<Blob> =>
   new Promise((resolve, reject) => {
@@ -48,6 +42,11 @@ const uriToBlob = (uri: string): Promise<Blob> =>
  * rendered an `Appbar.BackAction` that went nowhere once it became a tab. The header is
  * now a plain title row with the single contextual action (edit), and the identity block
  * that used to be repeated as an "Account" list is the hero instead.
+ *
+ * This screen is about the person and nothing else. The app card (version, platform) and
+ * the links card (GitHub, source, email) moved to `SettingsScreen`, where a version
+ * already lives. What is left is: who you are, how to change it, the one place that
+ * leads out of the tab, and how to leave the account.
  */
 const ProfileScreen = ({ navigation }: any) => {
   const { colors } = useTheme();
@@ -87,14 +86,6 @@ const ProfileScreen = ({ navigation }: any) => {
 
   const displayName = user?.displayName ?? 'Unknown';
   const username = user?.username ?? 'unknown';
-  const versionLabel = `${DeviceInfo.getVersion()} (${DeviceInfo.getBuildNumber()})`;
-  const platformLabel = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
-
-  const openLink = useCallback((url: string) => {
-    Linking.openURL(url).catch(() => {
-      setSnackbar('Could not open the link');
-    });
-  }, []);
 
   const openEdit = useCallback(() => {
     setDisplayNameDraft(displayName);
@@ -174,32 +165,6 @@ const ProfileScreen = ({ navigation }: any) => {
     signOut().catch(() => {});
   }, [signOut]);
 
-  /**
-   * One row, one value. Every list in this screen is built from these instead of a
-   * `List.Item` per row, because `List.Item` renders its own dividers and its own
-   * vertical rhythm and the four sections below it did not line up with each other.
-   */
-  const rows: {
-    label: string;
-    value?: string;
-    icon?: string;
-    onPress?: () => void;
-  }[] = [
-    { label: 'Display name', value: displayName },
-    { label: 'Username', value: `@${username}` },
-  ];
-
-  const appRows = [
-    { label: 'Version', value: versionLabel, icon: 'information-outline' },
-    { label: 'Platform', value: platformLabel, icon: 'cellphone' },
-  ];
-
-  const linkRows = [
-    { label: 'GitHub', icon: 'github', onPress: () => openLink(GITHUB_URL) },
-    { label: 'Source code', icon: 'source-repository', onPress: () => openLink(SOURCE_URL) },
-    { label: 'Email', icon: 'email-outline', onPress: () => openLink(EMAIL_URL) },
-  ];
-
   const card = {
     backgroundColor: colors.elevation.level1,
     borderRadius: 20,
@@ -239,6 +204,11 @@ const ProfileScreen = ({ navigation }: any) => {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
+        {/**
+         * The identity block is the whole of "who am I" in this app. It used to also
+         * exist twice more as an ACCOUNT list and a "Signed in as @..." caption; both
+         * were the same two values a second and third time.
+         */}
         <View style={styles.hero}>
           <Pressable
             onPress={editing ? pickAvatar : undefined}
@@ -250,11 +220,11 @@ const ProfileScreen = ({ navigation }: any) => {
               entity={user}
               name={displayName}
               override={avatarDraft}
-              size={96}
+              size={112}
               variant="paper"
               initialsStyle={{
                 backgroundColor: colors.primaryContainer,
-                borderRadius: 48,
+                borderRadius: 56,
               }}
               labelColor={colors.onPrimaryContainer}
               labelStyle={styles.heroInitials}
@@ -292,7 +262,7 @@ const ProfileScreen = ({ navigation }: any) => {
         {editing ? (
           <View style={[styles.card, card, styles.editCard]}>
             <Text variant="labelLarge" style={styles.sectionLabel}>
-              EDIT DETAILS
+              DISPLAY DETAILS
             </Text>
             <TextInput
               mode="outlined"
@@ -343,134 +313,32 @@ const ProfileScreen = ({ navigation }: any) => {
           </View>
         ) : (
           <>
-            <View style={[styles.card, card]}>
-              <Text variant="labelLarge" style={styles.sectionLabel}>
-                ACCOUNT
-              </Text>
-              {rows.map((row, index) => (
-                <View
-                  key={row.label}
-                  style={[
-                    styles.row,
-                    index > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.outlineVariant,
-                    },
-                  ]}
-                >
-                  <Text
-                    variant="bodyLarge"
-                    style={[styles.rowLabel, { color: colors.onSurface }]}
-                  >
-                    {row.label}
-                  </Text>
-                  <Text
-                    variant="bodyLarge"
-                    numberOfLines={1}
-                    style={[styles.rowValue, { color: colors.onSurfaceVariant }]}
-                  >
-                    {row.value}
-                  </Text>
-                </View>
-              ))}
-              <Text
-                variant="bodySmall"
-                style={[styles.cardCaption, { color: colors.onSurfaceVariant }]}
-              >
-                Signed in as @{username}
-              </Text>
-            </View>
-
-            <View style={[styles.card, card]}>
-              <Text variant="labelLarge" style={styles.sectionLabel}>
-                APP
-              </Text>
-              {appRows.map((row, index) => (
-                <View
-                  key={row.label}
-                  style={[
-                    styles.row,
-                    index > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.outlineVariant,
-                    },
-                  ]}
-                >
-                  <MaterialDesignIcons
-                    name={row.icon as never}
-                    size={20}
-                    color={colors.onSurfaceVariant}
-                  />
-                  <Text
-                    variant="bodyLarge"
-                    style={[styles.rowLabel, { color: colors.onSurface }]}
-                  >
-                    {row.label}
-                  </Text>
-                  <Text
-                    variant="bodyLarge"
-                    numberOfLines={1}
-                    style={[styles.rowValue, { color: colors.onSurfaceVariant }]}
-                  >
-                    {row.value}
-                  </Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={[styles.card, card]}>
-              <Text variant="labelLarge" style={styles.sectionLabel}>
-                LINKS
-              </Text>
-              {linkRows.map((row, index) => (
-                <Pressable
-                  key={row.label}
-                  style={({ pressed }) => [
-                    styles.row,
-                    index > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.outlineVariant,
-                    },
-                    pressed && { opacity: 0.6 },
-                  ]}
-                  onPress={row.onPress}
-                >
-                  <MaterialDesignIcons
-                    name={row.icon as never}
-                    size={20}
-                    color={colors.onSurfaceVariant}
-                  />
-                  <Text
-                    variant="bodyLarge"
-                    style={[styles.rowLabel, { color: colors.onSurface }]}
-                  >
-                    {row.label}
-                  </Text>
-                  <MaterialDesignIcons
-                    name="chevron-right"
-                    size={20}
-                    color={colors.outline}
-                  />
-                </Pressable>
-              ))}
-            </View>
-
-            <View style={[styles.card, card]}>
-              <Text variant="labelLarge" style={styles.sectionLabel}>
-                PREFERENCES
-              </Text>
+            {/**
+             * Settings is a stack route, not a tab, so this is the only way into it.
+             * It stays; what moved out of this screen went *into* it.
+             */}
+            <View style={[styles.card, card, styles.singleRowCard]}>
               <Pressable
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+                style={({ pressed }) => [
+                  styles.row,
+                  pressed && { opacity: 0.6 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Open settings"
                 onPress={() => navigation.navigate('Settings')}
               >
-                <MaterialDesignIcons
-                  name="cog-outline"
-                  size={20}
-                  color={colors.onSurfaceVariant}
-                />
+                <View
+                  style={[styles.icon, { backgroundColor: colors.surfaceVariant }]}
+                >
+                  <MaterialDesignIcons
+                    name="cog-outline"
+                    size={20}
+                    color={colors.onSurfaceVariant}
+                  />
+                </View>
                 <Text
                   variant="bodyLarge"
-                  style={[styles.rowLabel, { color: colors.onSurface }]}
+                  style={[styles.rowTitle, { color: colors.onSurface }]}
                 >
                   Settings
                 </Text>
@@ -563,19 +431,19 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,
-    gap: 12,
+    gap: 16,
   },
   hero: {
     alignItems: 'center',
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingTop: 24,
+    paddingBottom: 16,
   },
   heroInitials: {
-    fontSize: 32,
+    fontSize: 38,
     fontWeight: '700',
   },
   heroName: {
-    marginTop: 16,
+    marginTop: 20,
     marginBottom: 4,
   },
   cameraBadge: {
@@ -593,6 +461,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 16,
   },
+  singleRowCard: {
+    paddingVertical: 0,
+  },
   editCard: {
     paddingVertical: 14,
   },
@@ -607,16 +478,15 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
   },
-  rowLabel: {
+  icon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowTitle: {
     flex: 1,
-  },
-  rowValue: {
-    flexShrink: 1,
-  },
-  cardCaption: {
-    paddingTop: 10,
-    paddingBottom: 12,
-    opacity: 0.7,
   },
   input: {
     marginTop: 8,
@@ -639,7 +509,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   signOutButton: {
-    marginTop: 4,
     borderRadius: 24,
   },
 });

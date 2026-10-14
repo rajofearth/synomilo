@@ -58,26 +58,24 @@ describe('avatar resolution', () => {
       expect(resolved).toEqual({ kind: 'url', uri: 'https://cdn/x.png' });
     });
 
-    it('prefers Convex over the CometChat avatar', () => {
+    it('prefers the Convex avatar over the secondary field', () => {
       // Convex is the source of truth: it is what the profile editor writes.
       const resolved = resolveAvatar(
         {
           avatarUrl: 'https://cdn/convex.png',
-          avatar: 'https://cdn/cometchat.png',
+          avatar: 'https://cdn/secondary.png',
         },
         'Ada',
       );
       expect(resolved).toEqual({ kind: 'url', uri: 'https://cdn/convex.png' });
     });
 
-    it('falls back to the CometChat avatar when Convex has none', () => {
-      const resolved = resolveAvatar({ avatar: 'https://cdn/cometchat.png' }, 'Ada');
-      expect(resolved).toEqual({ kind: 'url', uri: 'https://cdn/cometchat.png' });
+    it('falls back to the secondary avatar when Convex has none', () => {
+      const resolved = resolveAvatar({ avatar: 'https://cdn/secondary.png' }, 'Ada');
+      expect(resolved).toEqual({ kind: 'url', uri: 'https://cdn/secondary.png' });
     });
 
     it('falls back to initials when both are empty', () => {
-      // This is the exact state CometChat-only sessions are stuck in, because
-      // cometchatSession.ts creates the user with no avatar.
       const resolved = resolveAvatar({ avatarUrl: null, avatar: null }, 'Ada Lovelace');
       expect(resolved).toEqual({ kind: 'initials', initials: 'AL' });
     });
@@ -119,7 +117,7 @@ describe('avatar resolution', () => {
       expect(resolved).toEqual({ kind: 'initials', initials: 'AL' });
     });
 
-    it('reads a CometChat-style name off the entity', () => {
+    it('reads a bare name off the entity', () => {
       const resolved = resolveAvatar({ name: 'Ada Lovelace' } as never);
       expect(resolved).toEqual({ kind: 'initials', initials: 'AL' });
     });

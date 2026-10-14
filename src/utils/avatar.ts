@@ -2,20 +2,14 @@
  * Canonical avatar resolution, shared by mobile and the upcoming web app.
  *
  * The bug this replaces: 28 of the 33 avatar render sites in the app fell back
- * to initials, because avatar data lives in two places that were never
- * synchronised and there was no single function to ask.
- *
- *   - Convex  `users.avatarUrl` - written by the profile editor.
- *   - CometChat `User.avatar` - a SEPARATE record, and the login/session helper
- *     (`src/auth/cometchatSession.ts:14-16`) creates the CometChat user as
- *     `{uid, name}` with no avatar and never calls `updateUser`, so it stays
- *     empty forever.
+ * to initials, because avatar data was arriving from more than one shape and
+ * there was no single function to ask.
  *
  * Rules:
  *   1. Prefer an explicitly passed override (the caller already has the URL).
  *   2. Otherwise prefer the Convex `avatarUrl` - it is the source of truth and
  *      is the one the profile editor writes.
- *   3. Fall back to the CometChat avatar, if one exists.
+ *   3. Fall back to a bare `avatar` field when a caller happens to carry one.
  *   4. Anything missing, blank, whitespace-only, non-http(s) or `data:` is
  *      rejected so a malformed value cannot render as a broken image.
  *   5. No URL -> initials. Callers must also attach an `onError` so a URL that
@@ -27,7 +21,7 @@ export type AvatarEntity =
   | {
       /** Convex users row (or the projection from `publicUser`). */
       avatarUrl?: string | null;
-      /** Present only on raw CometChat `User` objects. */
+      /** Secondary avatar field, for callers holding a differently-shaped entity. */
       avatar?: string | null;
     }
   | null
@@ -73,7 +67,7 @@ export function initialsFor(name: string | null | undefined): string {
 /**
  * Resolve what an avatar should render.
  *
- * @param entity   Convex user projection and/or a raw CometChat user.
+ * @param entity   The user projection (or any object carrying an avatar field).
  * @param name     Fallback label for initials.
  * @param override A URL the caller already resolved and wants to force.
  */
@@ -100,9 +94,9 @@ export function resolveAvatar(
     if (isUsableAvatarUrl(convex)) {
       return { kind: 'url', uri: convex.trim() };
     }
-    const comet = (entity as { avatar?: string | null }).avatar;
-    if (isUsableAvatarUrl(comet)) {
-      return { kind: 'url', uri: comet.trim() };
+    const secondary = (entity as { avatar?: string | null }).avatar;
+    if (isUsableAvatarUrl(secondary)) {
+      return { kind: 'url', uri: secondary.trim() };
     }
   }
 

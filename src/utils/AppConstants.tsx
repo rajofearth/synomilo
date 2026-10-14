@@ -1,12 +1,6 @@
 export const APP_NAME = 'synomiló';
 
 export const AppConstants = {
-  fcmProviderId: '',
-  apnsProviderId: '',
-  authKey: 'ee2fe34b0ca0817cdb650aa4f8b985fb07ed1245',
-  appId: '1683794f9fd14c574',
-  region: 'IN',
-  subscriptionType: 'ALL_USERS',
   // Display-only. The updater compares against the APK's `versionName` from
   // android/app/build.gradle, not this value - this was stale at V5.5.1 and
   // showed a wrong version in Profile and Settings.
@@ -17,32 +11,19 @@ export const AppConstants = {
     '',
 };
 
+/**
+ * Route names. Every key here maps to a registered `<Stack.Screen>` that has at least
+ * one live `navigate()` caller — see `RootStackParamList`, which is the type-level
+ * counterpart. The UIKit-era keys (CONVERSATION, CREATE_CONVERSATION, THREAD_VIEW,
+ * SEARCH_MESSAGES, SAVED_MESSAGES, PINNED_MESSAGES, USER_INFO, GROUP_INFO, ADD_MEMBER,
+ * TRANSFER_OWNERSHIP, BANNED_MEMBER, VIEW_MEMBER, QR_SCREEN, AI_AGENTS, CALL_DETAILS,
+ * CALL_LOGS, APP_CRED, SAMPLE_USER, ONGOING_CALL_SCREEN) went out with their screens.
+ */
 export const SCREEN_CONSTANTS = {
   LOGIN: 'Login',
   SIGN_UP: 'SignUp',
-  APP_CRED: 'AppCredentials',
-  SAMPLE_USER: 'SampleUser',
-  ONGOING_CALL_SCREEN: 'OngoingCallScreen',
   BOTTOM_TAB_NAVIGATOR: 'BottomTabNavigator',
   CHATS: 'Chats',
   CALLS: 'Calls',
-  USERS: 'Users',
-  GROUPS: 'Groups',
-  CONVERSATION: 'Conversation',
-  CREATE_CONVERSATION: 'CreateConversation',
   MESSAGES: 'Messages',
-  SEARCH_MESSAGES: 'SearchMessages',
-  THREAD_VIEW: 'ThreadView',
-  SAVED_MESSAGES: 'SavedMessages',
-  PINNED_MESSAGES: 'PinnedMessages',
-  USER_INFO: 'UserInfo',
-  GROUP_INFO: 'GroupInfo',
-  ADD_MEMBER: 'AddMember',
-  TRANSFER_OWNERSHIP: 'TransferOwnershipSection',
-  BANNED_MEMBER: 'BannedMember',
-  VIEW_MEMBER: 'ViewMembers',
-  CALL_LOGS: 'CallLogs',
-  CALL_DETAILS: 'CallDetails',
-  QR_SCREEN: 'QRScreen',
-  AI_AGENTS: 'AIAgents',
 } as const;

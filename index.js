@@ -4,7 +4,6 @@ import App from './App';
 import {name as appName} from './app.json';
 import AppErrorBoundary from './AppErrorBoundary';
 import {ActiveChatProvider} from './src/utils/ActiveChatContext';
-import {registerBackgroundCallTask} from '@cometchat/push-notifications-react-native';
 import messaging from '@react-native-firebase/messaging';
 import notifee from '@notifee/react-native';
 import {
@@ -28,10 +27,6 @@ messaging().setBackgroundMessageHandler(async remoteMessage => {
 notifee.onBackgroundEvent(async event => {
   await handleNotifeeBackgroundEvent(event);
 });
-
-// Lets a FULLY KILLED app reject a call declined from its notification. The package does
-// the work; this only registers its background task (Android — a no-op on iOS).
-registerBackgroundCallTask();
 
 if (global?.ErrorUtils) {
   const defaultHandler = global.ErrorUtils.getGlobalHandler();

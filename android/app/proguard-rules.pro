@@ -79,19 +79,6 @@
 -keep class io.invertase.notifee.HeadlessTask { *; }
 
 # ---------------------------------------------------------------------------
-# CometChat SDKs (chat UIKit, push notifications, calls SDK)
-# ---------------------------------------------------------------------------
--keep class com.cometchat.** { *; }
--keep class com.cometchat.chat.** { *; }
--keep class com.cometchat.calls.** { *; }
--keep class com.cometchat.pushnotifications.** { *; }
--keep class com.CometChatCalls.** { *; }
--keep class com.CometChatCommon.** { *; }
--dontwarn com.cometchat.**
--dontwarn com.CometChatCalls.**
--dontwarn com.CometChatCommon.**
-
-# ---------------------------------------------------------------------------
 # WebRTC (react-native-webrtc)
 # ---------------------------------------------------------------------------
 -keep class org.webrtc.** { *; }

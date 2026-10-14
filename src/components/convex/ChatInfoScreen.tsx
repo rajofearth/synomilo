@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Dimensions, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
 import { useMutation, useQuery } from 'convex/react';
 import dayjs from 'dayjs';
 import { launchImageLibrary } from 'react-native-image-picker';
@@ -18,8 +17,9 @@ import {
   Portal,
   SegmentedButtons,
   Snackbar,
+  Text,
   TextInput,
-  useTheme as usePaperTheme,
+  useTheme,
 } from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { api } from '../../../convex/_generated/api';
@@ -57,10 +57,19 @@ const mimeIcon = (mime: string | null): string =>
   : mime === 'application/pdf' ? 'file-pdf-box'
   : 'file-document-outline';
 
+/**
+ * `Text` below is react-native-paper's, and every colour is `colors.*`.
+ *
+ * This screen used to mix two themes on purpose and that is what stopped it following
+ * the device: the legacy UIKit `useTheme()` supplied `color.*` and
+ * `typography.*`, while Paper's supplied `colors.*`, and the UIKit palette is frozen —
+ * `App.tsx` builds one palette and hands the same object to the UIKit's `light` and
+ * `dark` slots, so the two never differ no matter what the OS reports. Paper's theme is
+ * rebuilt on every `useColorScheme()` change. Paper `Text variant`s replace the UIKit
+ * typography; the one hardcoded `#FFFFFF` on the video play badge came out too.
+ */
 const ChatInfoScreen = ({ route, navigation }: any) => {
-  const theme = useTheme();
-  const c = theme.color;
-  const { colors } = usePaperTheme();
+  const { colors } = useTheme();
   const { token, user } = useSession();
   const conversationId = route.params?.conversationId as string;
   const fallbackTitle = (route.params?.title as string) ?? 'Chat info';
@@ -305,12 +314,9 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
     }
   }, [token, conversationId, working, deleteGroup, exitScreen]);
 
-  const bodyStyle = [theme.typography.body.medium, { color: c.textPrimary }];
-  const subStyle = [theme.typography.caption1.regular, { color: c.textSecondary }];
-
   const empty = (message: string) => (
     <View style={styles.emptyWrap}>
-      <Text style={[theme.typography.body.medium, { color: c.textTertiary }]}>{message}</Text>
+      <Text variant="bodyMedium" style={{ color: colors.outline }}>{message}</Text>
     </View>
   );
 
@@ -323,15 +329,20 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
   const renderRow = (key: string, icon: string, header: string, description: string, onPress: () => void) => (
     <List.Item
       key={key}
-      title={header}
-      description={description}
-      titleNumberOfLines={1}
-      titleStyle={bodyStyle as any}
-      descriptionStyle={subStyle as any}
+      title={
+        <Text numberOfLines={1} variant="bodyLarge" style={{ color: colors.onSurface }}>
+          {header}
+        </Text>
+      }
+      description={
+        <Text numberOfLines={1} variant="bodySmall" style={{ color: colors.onSurfaceVariant }}>
+          {description}
+        </Text>
+      }
       style={styles.row}
       left={() => (
         <View style={styles.rowIcon}>
-          <MaterialDesignIcons name={icon as any} size={26} color={c.primary} />
+          <MaterialDesignIcons name={icon as never} size={26} color={colors.primary} />
         </View>
       )}
       onPress={onPress}
@@ -357,7 +368,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
               <Image source={{ uri: photo.fileUrl as string }} style={[styles.photo, { width: THUMB_SIZE, height: THUMB_SIZE }]} />
               {photo.kind === 'video' && (
                 <View style={styles.playOverlay} pointerEvents="none">
-                  <MaterialDesignIcons name="play-circle" size={36} color="#FFFFFF" />
+                  <MaterialDesignIcons name="play-circle" size={36} color={colors.inverseOnSurface} />
                 </View>
               )}
             </TouchableOpacity>
@@ -400,8 +411,8 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
     return renderLinks();
   };
 
-  const ownerChip = (member: any) => (
-    <Chip compact style={[styles.ownerChip, { backgroundColor: c.extendedPrimary50 }]} textStyle={[theme.typography.caption2.regular, { color: c.primary }]}>
+  const ownerChip = () => (
+    <Chip compact style={[styles.ownerChip, { backgroundColor: colors.primaryContainer }]} textStyle={{ color: colors.onPrimaryContainer }}>
       Owner
     </Chip>
   );
@@ -409,10 +420,18 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
   const memberRow = (member: any) => (
     <List.Item
       key={member._id}
-      title={member.displayName}
-      description={member.username ? `@${member.username}` : undefined}
-      titleStyle={bodyStyle as any}
-      descriptionStyle={subStyle as any}
+      title={
+        <Text numberOfLines={1} variant="bodyLarge" style={{ color: colors.onSurface }}>
+          {member.displayName}
+        </Text>
+      }
+      description={
+        member.username ? (
+          <Text numberOfLines={1} variant="bodySmall" style={{ color: colors.onSurfaceVariant }}>
+            @{member.username}
+          </Text>
+        ) : undefined
+      }
       style={styles.row}
       left={() => (
         <View style={styles.rowAvatar}>
@@ -422,14 +441,14 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
             size={40}
             variant="paper"
             imageStyle={styles.rowAvatarImage}
-            initialsStyle={{ backgroundColor: c.extendedPrimary50 }}
-            labelColor={c.textPrimary as string}
+            initialsStyle={{ backgroundColor: colors.primaryContainer }}
+            labelColor={colors.onPrimaryContainer}
           />
         </View>
       )}
       right={
         member.role === 'owner'
-          ? () => ownerChip(member)
+          ? () => ownerChip()
           : isOwner
           ? () => (
               <IconButton
@@ -444,15 +463,15 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: c.background1 }]} edges={['top']}>
-      <Appbar.Header statusBarHeight={0} elevated={false} style={{ backgroundColor: c.background2 }}>
-        <Appbar.BackAction onPress={() => navigation.goBack()} color={c.textPrimary} />
-        <Appbar.Content title="Chat info" titleStyle={{ color: c.textPrimary }} />
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+      <Appbar.Header statusBarHeight={0} elevated={false} style={{ backgroundColor: colors.surface }}>
+        <Appbar.BackAction onPress={() => navigation.goBack()} color={colors.onSurface} />
+        <Appbar.Content title="Chat info" titleStyle={{ color: colors.onSurface }} />
       </Appbar.Header>
 
       {conversation === undefined ? (
         <View style={styles.center}>
-          <ActivityIndicator color={c.primary} />
+          <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
@@ -471,16 +490,16 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
                 shape={isGroup ? 'rounded' : 'circle'}
                 imageStyle={styles.heroAvatarImage}
                 initialsStyle={{
-                  backgroundColor: c.extendedPrimary50,
+                  backgroundColor: colors.primaryContainer,
                   borderRadius: isGroup ? 24 : 40,
                 }}
-                labelColor={c.textPrimary as string}
+                labelColor={colors.onPrimaryContainer}
               />
               {isOwner && (
                 <TouchableOpacity
                   style={[
                     styles.heroCameraBadge,
-                    { backgroundColor: colors.primary, borderColor: c.background1 },
+                    { backgroundColor: colors.primary, borderColor: colors.background },
                   ]}
                   onPress={pickGroupPhoto}
                   disabled={uploadingAvatar}
@@ -494,8 +513,8 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
                 </TouchableOpacity>
               )}
             </View>
-            <Text style={[theme.typography.heading3.bold, { color: c.textPrimary, marginTop: 12 }]}>{title}</Text>
-            <Text style={[theme.typography.body.medium, { color: c.textSecondary }]}>
+            <Text variant="headlineSmall" style={{ color: colors.onSurface, marginTop: 12 }}>{title}</Text>
+            <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
               {isGroup ? `${members.length} ${members.length === 1 ? 'member' : 'members'}` : 'Direct message'}
             </Text>
           </View>
@@ -503,10 +522,10 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
           <View style={styles.quickRow}>
             {quickActions.map(action => (
               <TouchableOpacity key={action.label} style={styles.quickAction} onPress={action.onPress} activeOpacity={0.7}>
-                <View style={[styles.quickActionIcon, { backgroundColor: c.extendedPrimary50 }]}>
-                  <MaterialDesignIcons name={action.icon as any} size={22} color={c.primary} />
+                <View style={[styles.quickActionIcon, { backgroundColor: colors.primaryContainer }]}>
+                  <MaterialDesignIcons name={action.icon as any} size={22} color={colors.primary} />
                 </View>
-                <Text style={[subStyle, { marginTop: 6 }]}>{action.label}</Text>
+                <Text variant="bodySmall" style={[styles.quickActionLabel, { color: colors.onSurfaceVariant }]}>{action.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -514,18 +533,21 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
           {isGroup && (
             <>
               <View style={styles.sectionHeader}>
-                <Text style={[theme.typography.caption1.medium, { color: colors.onSurfaceVariant }]}>Members</Text>
-                <Text style={[theme.typography.caption1.regular, { color: colors.onSurfaceVariant }]}>
+                <Text variant="labelMedium" style={{ color: colors.onSurfaceVariant }}>Members</Text>
+                <Text variant="bodySmall" style={{ color: colors.onSurfaceVariant }}>
                   {members.length} {members.length === 1 ? 'member' : 'members'}
                 </Text>
               </View>
-              <Divider style={[styles.divider, { backgroundColor: c.borderDefault }]} />
+              <Divider style={[styles.divider, { backgroundColor: colors.outlineVariant }]} />
               {visibleMembers.map(memberRow)}
               {members.length > MEMBER_LIMIT && seeAllButton(showAllMembers, () => setShowAllMembers(value => !value))}
               {isOwner && (
                 <List.Item
-                  title="Add members"
-                  titleStyle={bodyStyle as any}
+                  title={
+                    <Text variant="bodyLarge" style={{ color: colors.onSurface }}>
+                      Add members
+                    </Text>
+                  }
                   style={styles.row}
                   left={() => (
                     <View style={styles.rowIcon}>
@@ -544,10 +566,10 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
             style={styles.segments}
             theme={{
               colors: {
-                secondaryContainer: c.extendedPrimary50,
-                onSecondaryContainer: c.primary,
-                outline: c.borderDefault,
-                onSurface: c.textSecondary,
+                secondaryContainer: colors.primaryContainer,
+                onSecondaryContainer: colors.primary,
+                outline: colors.outlineVariant,
+                onSurface: colors.onSurfaceVariant,
               },
             }}
             buttons={[
@@ -620,7 +642,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
         >
           <Dialog.Title style={{ color: colors.onSurface }}>Remove member</Dialog.Title>
           <Dialog.Content>
-            <Text style={[theme.typography.body.medium, { color: colors.onSurfaceVariant }]}>
+            <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
               {`Remove ${removeTarget?.displayName ?? 'this member'} from the group?`}
             </Text>
           </Dialog.Content>
@@ -643,7 +665,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
         >
           <Dialog.Title style={{ color: colors.onSurface }}>Leave group</Dialog.Title>
           <Dialog.Content>
-            <Text style={[theme.typography.body.medium, { color: colors.onSurfaceVariant }]}>
+            <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
               Leave this group? You will no longer see its messages.
             </Text>
           </Dialog.Content>
@@ -666,7 +688,7 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
         >
           <Dialog.Title style={{ color: colors.onSurface }}>Delete group</Dialog.Title>
           <Dialog.Content>
-            <Text style={[theme.typography.body.medium, { color: colors.onSurfaceVariant }]}>
+            <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
               Delete this group for everyone? This cannot be undone.
             </Text>
           </Dialog.Content>
@@ -684,14 +706,14 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
       <Modal visible={addOpen} transparent animationType="slide" onRequestClose={closeAdd}>
         <Pressable style={styles.modalBackdrop} onPress={closeAdd}>
           <Pressable style={[styles.sheet, { backgroundColor: colors.elevation.level2 }]} onPress={() => {}}>
-            <Text style={[theme.typography.heading3.bold, { color: colors.onSurface, marginBottom: 8 }]}>Add members</Text>
+            <Text variant="headlineSmall" style={{ color: colors.onSurface, marginBottom: 8 }}>Add members</Text>
             {users === undefined ? (
               <View style={styles.sheetState}>
                 <ActivityIndicator color={colors.primary} />
               </View>
             ) : candidates.length === 0 ? (
               <View style={styles.sheetState}>
-                <Text style={[theme.typography.body.medium, { color: colors.onSurfaceVariant }]}>Everyone is already in this group.</Text>
+                <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>Everyone is already in this group.</Text>
               </View>
             ) : (
               <ScrollView style={styles.sheetList} keyboardShouldPersistTaps="handled">
@@ -707,14 +729,14 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
                         variant="text"
                         containerStyle={[
                           styles.addRowAvatar,
-                          { backgroundColor: c.extendedPrimary50 },
+                          { backgroundColor: colors.primaryContainer },
                         ]}
                         labelStyle={styles.addRowInitials}
-                        labelColor={c.primary}
+                        labelColor={colors.primary}
                       />
                       <View style={styles.addRowBody}>
-                        <Text style={[theme.typography.body.medium, { color: colors.onSurface }]}>{item.displayName}</Text>
-                        <Text style={[theme.typography.caption1.regular, { color: colors.onSurfaceVariant }]}>@{item.username}</Text>
+                        <Text variant="bodyMedium" style={{ color: colors.onSurface }}>{item.displayName}</Text>
+                        <Text variant="bodySmall" style={{ color: colors.onSurfaceVariant }}>@{item.username}</Text>
                       </View>
                     </TouchableOpacity>
                   );
@@ -767,6 +789,7 @@ const styles = StyleSheet.create({
   quickRow: { flexDirection: 'row', justifyContent: 'space-evenly', paddingHorizontal: 12, marginBottom: 20 },
   quickAction: { alignItems: 'center', minWidth: 72 },
   quickActionIcon: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  quickActionLabel: { marginTop: 6, textAlign: 'center' },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 8 },
   segments: { marginHorizontal: 16, marginTop: 8, marginBottom: 8 },
   emptyWrap: { alignItems: 'center', paddingVertical: 48 },

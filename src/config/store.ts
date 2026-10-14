@@ -22,20 +22,6 @@ interface StyleConfig {
   typography: TypographyConfig;
 }
 
-interface NoCodeStyles {
-  buttonBackGround: string;
-  buttonShape: string;
-  openIcon: string;
-  closeIcon: string;
-  customJs: string;
-  customCss: string;
-}
-
-interface NoCodeConfig {
-  docked: boolean;
-  styles: NoCodeStyles;
-}
-
 interface LayoutConfig {
   withSideBar: boolean;
   tabs: string[];
@@ -119,7 +105,6 @@ interface SettingsConfig {
   callFeatures: CallFeaturesConfig;
   layout: LayoutConfig;
   style: StyleConfig;
-  noCode: NoCodeConfig;
 }
 
 interface AppConfig {

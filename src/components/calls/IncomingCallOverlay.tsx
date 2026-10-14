@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { useTheme } from 'react-native-paper';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
@@ -172,12 +172,12 @@ const IncomingCallOverlay: React.FC = () => {
 
   return (
     <View
-      style={[styles.backdrop, { backgroundColor: theme.color.background1 }]}
+      style={[styles.backdrop, { backgroundColor: theme.colors.background }]}
     >
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.body}>
           <Text
-            style={[styles.callingLabel, { color: theme.color.textSecondary }]}
+            style={[styles.callingLabel, { color: theme.colors.onSurfaceVariant }]}
           >
             Incoming {incoming.type === 'video' ? 'video' : 'voice'} call
           </Text>
@@ -186,7 +186,7 @@ const IncomingCallOverlay: React.FC = () => {
               style={[
                 styles.pulseRing,
                 {
-                  borderColor: theme.color.primary,
+                  borderColor: theme.colors.primary,
                   transform: [{ scale: pulseScale }],
                 },
               ]}
@@ -194,7 +194,7 @@ const IncomingCallOverlay: React.FC = () => {
             <View
               style={[
                 styles.avatar,
-                { backgroundColor: theme.color.extendedPrimary50 },
+                { backgroundColor: theme.colors.primaryContainer },
               ]}
             >
               <UserAvatar
@@ -203,11 +203,11 @@ const IncomingCallOverlay: React.FC = () => {
                 size={140}
                 variant="text"
                 labelStyle={styles.avatarText}
-                labelColor={theme.color.primary}
+                labelColor={theme.colors.primary}
               />
             </View>
           </View>
-          <Text style={[styles.name, { color: theme.color.textPrimary }]}>
+          <Text style={[styles.name, { color: theme.colors.onSurface }]}>
             {callerName}
           </Text>
         </View>
@@ -226,7 +226,7 @@ const IncomingCallOverlay: React.FC = () => {
               />
             </TouchableOpacity>
             <Text
-              style={[styles.actionLabel, { color: theme.color.textPrimary }]}
+              style={[styles.actionLabel, { color: theme.colors.onSurface }]}
             >
               Decline
             </Text>
@@ -244,7 +244,7 @@ const IncomingCallOverlay: React.FC = () => {
               )}
             </TouchableOpacity>
             <Text
-              style={[styles.actionLabel, { color: theme.color.textPrimary }]}
+              style={[styles.actionLabel, { color: theme.colors.onSurface }]}
             >
               Accept
             </Text>

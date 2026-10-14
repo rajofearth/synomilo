@@ -12,7 +12,7 @@ import {
   Keyboard,
   ActivityIndicator,
 } from 'react-native';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { useTheme } from 'react-native-paper';
 import { useMutation } from 'convex/react';
 import { SCREEN_CONSTANTS, APP_NAME } from '../../utils/AppConstants';
 import { navigate, resetTo } from '../../navigation/NavigationService';
@@ -20,7 +20,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
-import { ensureCometChatSession } from '../../auth/cometchatSession';
 import { convexErrorMessage } from '../../utils/convexError';
 
 const TOAST_DURATION_MS = 2800;
@@ -119,30 +118,9 @@ const Login: React.FC = () => {
     try {
       const result = await loginMutation({ username: uid, password });
       await signIn(result.token);
-      /**
-       * Awaited on purpose. Fire-and-forget left the calls layer un-authenticated while
-       * the UI already claimed to be signed in, and raced the `sessionUser` effect in
-       * App.tsx into two concurrent `CometChatUIKit.login()` calls for one identity.
-       *
-       * The CometChat UID is the Convex username, normalised the same way the server
-       * normalises it, so the identity is identical on every device.
-       *
-       * A failure here is NOT fatal — Convex is the system of record for chat, groups,
-       * files and reactions, and the user is legitimately signed in. It is surfaced
-       * instead of swallowed: `cometchatSession` publishes it and the root navigator shows
-       * a dismissible banner, so "calls are broken" is a fact on screen and not something
-       * the user discovers by dialling someone.
-       */
-      const cometChat = await ensureCometChatSession(
-        result.user.username,
-        result.user.displayName,
-      );
       // `reset` alone: a preceding `navigate()` would have queued an intent that replayed
       // on top of the fresh stack, leaving a duplicate tab screen behind the back button.
       await resetTo(SCREEN_CONSTANTS.BOTTOM_TAB_NAVIGATOR);
-      if (!cometChat.ok) {
-        console.log('[Login] CometChat session unavailable:', cometChat.reason);
-      }
     } catch (error: any) {
       showToast(
         convexErrorMessage(
@@ -158,7 +136,7 @@ const Login: React.FC = () => {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: theme.color.background2 }]}
+      style={[styles.container, { backgroundColor: theme.colors.surface }]}
     >
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -173,8 +151,8 @@ const Login: React.FC = () => {
             <View style={styles.brandContainer}>
               <Text
                 style={[
-                  theme.typography.heading1.bold,
-                  { color: theme.color.primary },
+                  theme.fonts.headlineLarge,
+                  { color: theme.colors.primary },
                 ]}
               >
                 {APP_NAME}
@@ -183,17 +161,17 @@ const Login: React.FC = () => {
 
             <Text
               style={[
-                theme.typography.heading3.bold,
-                { color: theme.color.textPrimary, alignSelf: 'center' },
+                theme.fonts.titleLarge,
+                { color: theme.colors.onSurface, alignSelf: 'center' },
               ]}
             >
               Log in
             </Text>
             <Text
               style={[
-                theme.typography.body.medium,
+                theme.fonts.bodyMedium,
                 {
-                  color: theme.color.textSecondary,
+                  color: theme.colors.onSurfaceVariant,
                   alignSelf: 'center',
                   marginTop: 6,
                   marginBottom: 24,
@@ -206,8 +184,8 @@ const Login: React.FC = () => {
             <View style={styles.inputContainer}>
               <Text
                 style={[
-                  theme.typography.caption1.medium,
-                  { color: theme.color.textPrimary, paddingBottom: 5 },
+                  theme.fonts.labelMedium,
+                  { color: theme.colors.onSurface, paddingBottom: 5 },
                 ]}
               >
                 Username
@@ -216,15 +194,15 @@ const Login: React.FC = () => {
                 style={[
                   styles.input,
                   {
-                    borderColor: theme.color.borderLight,
-                    backgroundColor: theme.color.background2,
-                    color: theme.color.textPrimary,
+                    borderColor: theme.colors.outlineVariant,
+                    backgroundColor: theme.colors.surface,
+                    color: theme.colors.onSurface,
                   },
                 ]}
                 value={username}
                 onChangeText={setUsername}
                 placeholder="Enter your username"
-                placeholderTextColor={theme.color.textTertiary}
+                placeholderTextColor={theme.colors.outline}
                 autoCapitalize="none"
                 autoCorrect={false}
                 editable={!isLoading}
@@ -236,8 +214,8 @@ const Login: React.FC = () => {
             <View style={[styles.inputContainer, { marginTop: 20 }]}>
               <Text
                 style={[
-                  theme.typography.caption1.medium,
-                  { color: theme.color.textPrimary, paddingBottom: 5 },
+                  theme.fonts.labelMedium,
+                  { color: theme.colors.onSurface, paddingBottom: 5 },
                 ]}
               >
                 Password
@@ -246,15 +224,15 @@ const Login: React.FC = () => {
                 style={[
                   styles.input,
                   {
-                    borderColor: theme.color.borderLight,
-                    backgroundColor: theme.color.background2,
-                    color: theme.color.textPrimary,
+                    borderColor: theme.colors.outlineVariant,
+                    backgroundColor: theme.colors.surface,
+                    color: theme.colors.onSurface,
                   },
                 ]}
                 value={password}
                 onChangeText={setPassword}
                 placeholder="Enter your password"
-                placeholderTextColor={theme.color.textTertiary}
+                placeholderTextColor={theme.colors.outline}
                 secureTextEntry
                 editable={!isLoading}
                 textContentType="password"
@@ -269,7 +247,7 @@ const Login: React.FC = () => {
               style={[
                 styles.primaryButton,
                 {
-                  backgroundColor: theme.color.primaryButtonBackground,
+                  backgroundColor: theme.colors.primary,
                   opacity: isFormValid ? 1 : 0.6,
                 },
               ]}
@@ -279,12 +257,12 @@ const Login: React.FC = () => {
               accessibilityState={{ disabled: !isFormValid || isLoading, busy: isLoading }}
             >
               {isLoading ? (
-                <ActivityIndicator size="small" color={theme.color.staticWhite} />
+                <ActivityIndicator size="small" color={theme.colors.onPrimary} />
               ) : (
                 <Text
                   style={[
-                    theme.typography.button.medium,
-                    { textAlign: 'center', color: theme.color.staticWhite },
+                    theme.fonts.labelLarge,
+                    { textAlign: 'center', color: theme.colors.onPrimary },
                   ]}
                 >
                   Continue
@@ -295,8 +273,8 @@ const Login: React.FC = () => {
             <View style={styles.switchRow}>
               <Text
                 style={[
-                  theme.typography.body.regular,
-                  { color: theme.color.textSecondary },
+                  theme.fonts.bodyMedium,
+                  { color: theme.colors.onSurfaceVariant },
                 ]}
               >
                 New to {APP_NAME}?{' '}
@@ -307,8 +285,8 @@ const Login: React.FC = () => {
               >
                 <Text
                   style={[
-                    theme.typography.body.medium,
-                    { color: theme.color.primary },
+                    theme.fonts.bodyMedium,
+                    { color: theme.colors.primary },
                   ]}
                 >
                   Create an account
@@ -327,9 +305,9 @@ const Login: React.FC = () => {
          */}
         {toastMessage && (
           <View
-            style={[styles.toastContainer, { backgroundColor: theme.color.error }]}
+            style={[styles.toastContainer, { backgroundColor: theme.colors.error }]}
           >
-            <Text style={[styles.toastText, { color: theme.color.staticWhite }]}>
+            <Text style={[styles.toastText, { color: theme.colors.onError }]}>
               {toastMessage}
             </Text>
           </View>

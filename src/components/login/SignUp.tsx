@@ -12,7 +12,7 @@ import {
   Keyboard,
   ActivityIndicator,
 } from 'react-native';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { useTheme } from 'react-native-paper';
 import { useMutation } from 'convex/react';
 import { SCREEN_CONSTANTS, APP_NAME } from '../../utils/AppConstants';
 import { navigationRef, resetTo } from '../../navigation/NavigationService';
@@ -20,7 +20,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
-import { ensureCometChatSession } from '../../auth/cometchatSession';
 import { convexErrorMessage } from '../../utils/convexError';
 
 const UID_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
@@ -131,23 +130,7 @@ const SignUp: React.FC = () => {
         displayName: trimmedName,
       });
       await signIn(result.token);
-      /**
-       * Awaited: the CometChat identity for a brand new account is created lazily here, so
-       * skipping it leaves an account that exists in Convex but has no CometChat user and
-       * no way to ever get one. A failure is reported rather than swallowed — the root
-       * navigator shows a dismissible "calls unavailable" banner and chat keeps working.
-       *
-       * UID is the Convex username, normalised the same way the server normalises it, so
-       * the CometChat identity matches the Convex one on every device.
-       */
-      const cometChat = await ensureCometChatSession(
-        result.user.username,
-        result.user.displayName,
-      );
       await resetTo(SCREEN_CONSTANTS.BOTTOM_TAB_NAVIGATOR);
-      if (!cometChat.ok) {
-        console.log('[SignUp] CometChat session unavailable:', cometChat.reason);
-      }
     } catch (error: any) {
       showToast(
         convexErrorMessage(
@@ -163,7 +146,7 @@ const SignUp: React.FC = () => {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: theme.color.background2 }]}
+      style={[styles.container, { backgroundColor: theme.colors.surface }]}
     >
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -178,8 +161,8 @@ const SignUp: React.FC = () => {
             <View style={styles.brandContainer}>
               <Text
                 style={[
-                  theme.typography.heading1.bold,
-                  { color: theme.color.primary },
+                  theme.fonts.headlineLarge,
+                  { color: theme.colors.primary },
                 ]}
               >
                 {APP_NAME}
@@ -188,17 +171,17 @@ const SignUp: React.FC = () => {
 
             <Text
               style={[
-                theme.typography.heading3.bold,
-                { color: theme.color.textPrimary, alignSelf: 'center' },
+                theme.fonts.titleLarge,
+                { color: theme.colors.onSurface, alignSelf: 'center' },
               ]}
             >
               Create your account
             </Text>
             <Text
               style={[
-                theme.typography.body.medium,
+                theme.fonts.bodyMedium,
                 {
-                  color: theme.color.textSecondary,
+                  color: theme.colors.onSurfaceVariant,
                   alignSelf: 'center',
                   marginTop: 6,
                   marginBottom: 24,
@@ -211,8 +194,8 @@ const SignUp: React.FC = () => {
             <View style={styles.inputContainer}>
               <Text
                 style={[
-                  theme.typography.caption1.medium,
-                  { color: theme.color.textPrimary, paddingBottom: 5 },
+                  theme.fonts.labelMedium,
+                  { color: theme.colors.onSurface, paddingBottom: 5 },
                 ]}
               >
                 Full name
@@ -221,15 +204,15 @@ const SignUp: React.FC = () => {
                 style={[
                   styles.input,
                   {
-                    borderColor: theme.color.borderLight,
-                    backgroundColor: theme.color.background2,
-                    color: theme.color.textPrimary,
+                    borderColor: theme.colors.outlineVariant,
+                    backgroundColor: theme.colors.surface,
+                    color: theme.colors.onSurface,
                   },
                 ]}
                 value={fullName}
                 onChangeText={setFullName}
                 placeholder="e.g. Asha Patel"
-                placeholderTextColor={theme.color.textTertiary}
+                placeholderTextColor={theme.colors.outline}
                 autoCapitalize="words"
                 autoCorrect={false}
                 editable={!isLoading}
@@ -240,8 +223,8 @@ const SignUp: React.FC = () => {
             <View style={[styles.inputContainer, { marginTop: 20 }]}>
               <Text
                 style={[
-                  theme.typography.caption1.medium,
-                  { color: theme.color.textPrimary, paddingBottom: 5 },
+                  theme.fonts.labelMedium,
+                  { color: theme.colors.onSurface, paddingBottom: 5 },
                 ]}
               >
                 Username
@@ -250,15 +233,15 @@ const SignUp: React.FC = () => {
                 style={[
                   styles.input,
                   {
-                    borderColor: theme.color.borderLight,
-                    backgroundColor: theme.color.background2,
-                    color: theme.color.textPrimary,
+                    borderColor: theme.colors.outlineVariant,
+                    backgroundColor: theme.colors.surface,
+                    color: theme.colors.onSurface,
                   },
                 ]}
                 value={username}
                 onChangeText={setUsername}
                 placeholder="e.g. asha.patel"
-                placeholderTextColor={theme.color.textTertiary}
+                placeholderTextColor={theme.colors.outline}
                 autoCapitalize="none"
                 autoCorrect={false}
                 editable={!isLoading}
@@ -267,8 +250,8 @@ const SignUp: React.FC = () => {
               />
               <Text
                 style={[
-                  theme.typography.caption1.regular,
-                  { color: theme.color.textTertiary, marginTop: 5 },
+                  theme.fonts.bodySmall,
+                  { color: theme.colors.outline, marginTop: 5 },
                 ]}
               >
                 3-32 characters: letters, numbers, dots, dashes, underscores.
@@ -278,8 +261,8 @@ const SignUp: React.FC = () => {
             <View style={[styles.inputContainer, { marginTop: 20 }]}>
               <Text
                 style={[
-                  theme.typography.caption1.medium,
-                  { color: theme.color.textPrimary, paddingBottom: 5 },
+                  theme.fonts.labelMedium,
+                  { color: theme.colors.onSurface, paddingBottom: 5 },
                 ]}
               >
                 Password
@@ -288,15 +271,15 @@ const SignUp: React.FC = () => {
                 style={[
                   styles.input,
                   {
-                    borderColor: theme.color.borderLight,
-                    backgroundColor: theme.color.background2,
-                    color: theme.color.textPrimary,
+                    borderColor: theme.colors.outlineVariant,
+                    backgroundColor: theme.colors.surface,
+                    color: theme.colors.onSurface,
                   },
                 ]}
                 value={password}
                 onChangeText={setPassword}
                 placeholder="At least 6 characters"
-                placeholderTextColor={theme.color.textTertiary}
+                placeholderTextColor={theme.colors.outline}
                 secureTextEntry
                 editable={!isLoading}
                 textContentType="newPassword"
@@ -311,7 +294,7 @@ const SignUp: React.FC = () => {
               style={[
                 styles.primaryButton,
                 {
-                  backgroundColor: theme.color.primaryButtonBackground,
+                  backgroundColor: theme.colors.primary,
                   opacity: isFormValid ? 1 : 0.6,
                 },
               ]}
@@ -324,12 +307,12 @@ const SignUp: React.FC = () => {
               }}
             >
               {isLoading ? (
-                <ActivityIndicator size="small" color={theme.color.staticWhite} />
+                <ActivityIndicator size="small" color={theme.colors.onPrimary} />
               ) : (
                 <Text
                   style={[
-                    theme.typography.button.medium,
-                    { textAlign: 'center', color: theme.color.staticWhite },
+                    theme.fonts.labelLarge,
+                    { textAlign: 'center', color: theme.colors.onPrimary },
                   ]}
                 >
                   Create account
@@ -340,8 +323,8 @@ const SignUp: React.FC = () => {
             <View style={styles.switchRow}>
               <Text
                 style={[
-                  theme.typography.body.regular,
-                  { color: theme.color.textSecondary },
+                  theme.fonts.bodyMedium,
+                  { color: theme.colors.onSurfaceVariant },
                 ]}
               >
                 Already have an account?{' '}
@@ -352,8 +335,8 @@ const SignUp: React.FC = () => {
               >
                 <Text
                   style={[
-                    theme.typography.body.medium,
-                    { color: theme.color.primary },
+                    theme.fonts.bodyMedium,
+                    { color: theme.colors.primary },
                   ]}
                 >
                   Log in
@@ -370,9 +353,9 @@ const SignUp: React.FC = () => {
          */}
         {toastMessage && (
           <View
-            style={[styles.toastContainer, { backgroundColor: theme.color.error }]}
+            style={[styles.toastContainer, { backgroundColor: theme.colors.error }]}
           >
-            <Text style={[styles.toastText, { color: theme.color.staticWhite }]}>
+            <Text style={[styles.toastText, { color: theme.colors.onError }]}>
               {toastMessage}
             </Text>
           </View>

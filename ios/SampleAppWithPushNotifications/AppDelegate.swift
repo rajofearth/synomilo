@@ -3,7 +3,6 @@ import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
 import UserNotifications
-import react_native_cometchat_push_notifications
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -25,14 +24,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     reactNativeDelegate = delegate
     reactNativeFactory = factory
 
-    // VoIP pushes: @cometchat/push-notifications-react-native creates and owns the PushKit
-    // registry (VoIP token + reporting incoming calls to CallKit). Must run BEFORE React
-    // Native starts: a call that wakes a killed app has to reach CallKit within ~5s.
-    CometChatPushNotificationsAppDelegate.registerForVoIPPushes()
-
-    // NOTE: the package sets itself as the UNUserNotificationCenter delegate
-    // (to honour showInForeground + emit notificationTapped), so the app does
-    // not set one here.
+    // NOTE: `@react-native-firebase/messaging` sets itself as the
+    // UNUserNotificationCenter delegate and installs its own
+    // `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` through App
+    // Delegate swizzling (no `FirebaseAppDelegateProxyEnabled` key in Info.plist means
+    // swizzling is ON), so the app declares neither.
+    //
+    // The PushKit / CallKit registration that used to sit here
+    // (`registerForVoIPPushes()`) is gone with
+    // that package. Incoming calls arrive over FCM and
+    // are rendered by notifee + `IncomingCallActivity.kt` / the notifee foreground
+    // handlers in `App.tsx`.
 
         window = UIWindow(frame: UIScreen.main.bounds)
 
@@ -52,7 +54,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
   ) {
     print("⚡️[AppDelegate] didRegisterForRemoteNotificationsWithDeviceToken deviceToken => \(deviceToken)")
-    CometChatPushNotificationsAppDelegate.didRegisterAPNsToken(deviceToken)
   }
 
   func application(
@@ -60,15 +61,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     didFailToRegisterForRemoteNotificationsWithError error: Error
   ) {
     print("⚡️[AppDelegate] didFailToRegisterForRemoteNotificationsWithError => \(error)")
-  }
-
-  func application(
-    _ application: UIApplication,
-    didReceiveRemoteNotification userInfo: [AnyHashable : Any],
-    fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
-  ) {
-    CometChatPushNotificationsAppDelegate.didReceiveRemoteNotification(userInfo)
-    completionHandler(.noData)
   }
 
 }

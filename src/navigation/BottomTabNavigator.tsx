@@ -17,6 +17,7 @@ import Conversations from '../components/convex/ConversationsList';
 import Calls from '../components/calls/Calls';
 import Profile from '../components/convex/ProfileScreen';
 import { BottomTabParamList } from './types';
+import { t } from '../i18n/strings';
 
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
@@ -29,17 +30,17 @@ const icons: Record<keyof BottomTabParamList, TabIconName> = {
 };
 
 /**
- * Tab labels are literal, not translated.
+ * Tab labels resolve through the in-repo string table (`src/i18n/strings.ts`).
  *
- * This used to be `t(route.name.toUpperCase())` against the CometChat i18n bundle.
- * That bundle has `CHATS` and `CALLS` but no `PROFILE`, and `CometChatLocalizationHelper`
- * returns the key itself when a lookup misses — so adding Profile as a tab would have
- * rendered the label as a shouted `PROFILE` sitting under two sentence-case siblings.
+ * This used to be the UIKit's `t(route.name.toUpperCase())` against the
+ * UIKit's localisation bundle. That bundle has `CHATS` and `CALLS` but no `PROFILE`, and
+ * its lookup returns the key itself on a miss — so adding Profile as a tab rendered a
+ * shouted `PROFILE` above two sentence-case siblings.
  */
 const labels: Record<keyof BottomTabParamList, string> = {
-  Chats: 'Chats',
-  Calls: 'Calls',
-  Profile: 'Profile',
+  Chats: t('CHATS'),
+  Calls: t('CALLS'),
+  Profile: t('PROFILE'),
 };
 
 const CustomTabBarButton = ({ children, onPress }: BottomTabBarButtonProps) => (
@@ -102,7 +103,6 @@ const TabIcon = ({ focused, name }: TabIconProps) => {
  * and the filter was the only thing the config could actually influence. `Groups` and
  * `Users` are gone now (groups are gone from the app; the user directory became the
  * Add Contact screen and Profile became a tab), so the store lookup is gone with them.
- * `settings.layout` still exists for `compactMessageComposer`, which ThreadView reads.
  */
 const TABS: {
   name: keyof BottomTabParamList;

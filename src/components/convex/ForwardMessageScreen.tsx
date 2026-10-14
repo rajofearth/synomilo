@@ -1,8 +1,14 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { View, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useQuery, useMutation } from 'convex/react';
-import { Appbar, Searchbar, Divider, ActivityIndicator } from 'react-native-paper';
+import {
+  Appbar,
+  Searchbar,
+  Divider,
+  ActivityIndicator,
+  Text,
+  useTheme,
+} from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
@@ -51,8 +57,17 @@ const previewForMessage = (message: ForwardableMessage): string => {
   return message.fileName ?? 'File';
 };
 
+/**
+ * Every colour and every text style below comes from react-native-paper's theme.
+ *
+ * This screen used to read `theme.color.*` and `theme.typography.*` from the UIKit
+ * UIKit, which `App.tsx` feeds a single frozen palette (the same object is handed to the
+ * UIKit's `light` and `dark` slots), so flipping the phone to light mode left this screen
+ * on the dark palette while the tab bar and the chat list moved. Paper's theme is rebuilt
+ * on every `useColorScheme()` change, so it tracks the device.
+ */
 const ForwardMessageScreen = ({ route, navigation }: any) => {
-  const theme = useTheme();
+  const { colors } = useTheme();
   const { token } = useSession();
   const message = route.params?.message as ForwardableMessage;
 
@@ -82,7 +97,7 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
           conversationId: item._id as any,
           kind: message.kind,
           body: message.body ?? undefined,
-          storageId: message.storageId ?? undefined,
+          storageId: (message.storageId ?? undefined) as any,
           fileName: message.fileName ?? undefined,
           mimeType: message.mimeType ?? undefined,
           size: message.size ?? undefined,
@@ -118,45 +133,47 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
             radius={corner}
             imageStyle={{ width: 44, height: 44, borderRadius: corner }}
             initialsStyle={{
-              backgroundColor: theme.color.extendedPrimary50,
+              backgroundColor: colors.primaryContainer,
               borderRadius: corner,
             }}
-            labelStyle={[styles.avatarLabel, { color: theme.color.primary }]}
+            labelStyle={[styles.avatarLabel, { color: colors.onPrimaryContainer }]}
           />
           <View style={styles.rowBody}>
             <Text
               numberOfLines={1}
-              style={[theme.typography.body.medium, { color: theme.color.textPrimary }]}
+              variant="bodyLarge"
+              style={{ color: colors.onSurface }}
             >
               {item.title}
             </Text>
             <Text
               numberOfLines={1}
-              style={[theme.typography.caption1.regular, styles.rowPreview, { color: theme.color.textSecondary }]}
+              variant="bodySmall"
+              style={[styles.rowPreview, { color: colors.onSurfaceVariant }]}
             >
               {item.lastMessagePreview}
             </Text>
           </View>
           {busy ? (
-            <ActivityIndicator size={20} color={theme.color.primary} />
+            <ActivityIndicator size={20} color={colors.onSurfaceVariant} />
           ) : (
-            <MaterialDesignIcons name="chevron-right" size={24} color={theme.color.textTertiary} />
+            <MaterialDesignIcons name="chevron-right" size={24} color={colors.outline} />
           )}
         </TouchableOpacity>
       );
     },
-    [theme, sendingId, forwardTo],
+    [colors, sendingId, forwardTo],
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.color.background1 }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Appbar.Header
-        style={{ backgroundColor: theme.color.background2, elevation: 0 }}
+        style={{ backgroundColor: colors.surface, elevation: 0 }}
       >
-        <Appbar.BackAction onPress={() => navigation.goBack()} color={theme.color.textPrimary} />
+        <Appbar.BackAction onPress={() => navigation.goBack()} color={colors.onSurface} />
         <Appbar.Content
           title="Forward to"
-          titleStyle={[theme.typography.heading3.bold, { color: theme.color.textPrimary }]}
+          titleStyle={{ color: colors.onSurface }}
         />
       </Appbar.Header>
 
@@ -164,22 +181,30 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
         <View
           style={[
             styles.preview,
-            { backgroundColor: theme.color.background2, borderColor: theme.color.borderDefault },
+            { backgroundColor: colors.surface, borderColor: colors.outlineVariant },
           ]}
         >
-          <View style={[styles.previewIcon, { backgroundColor: theme.color.extendedPrimary50 }]}>
-            <MaterialDesignIcons name={iconForKind(message.kind)} size={22} color={theme.color.primary} />
+          <View
+            style={[styles.previewIcon, { backgroundColor: colors.primaryContainer }]}
+          >
+            <MaterialDesignIcons
+              name={iconForKind(message.kind) as never}
+              size={22}
+              color={colors.onPrimaryContainer}
+            />
           </View>
           <View style={styles.previewBody}>
             <Text
               numberOfLines={1}
-              style={[theme.typography.caption1.regular, { color: theme.color.textSecondary }]}
+              variant="bodySmall"
+              style={{ color: colors.onSurfaceVariant }}
             >
               Forwarding from {message.sender.displayName}
             </Text>
             <Text
               numberOfLines={2}
-              style={[theme.typography.body.medium, { color: theme.color.textPrimary }]}
+              variant="bodyMedium"
+              style={{ color: colors.onSurface }}
             >
               {previewForMessage(message)}
             </Text>
@@ -190,16 +215,16 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
           value={search}
           onChangeText={setSearch}
           elevation={0}
-          iconColor={theme.color.textSecondary}
-          placeholderTextColor={theme.color.textTertiary}
-          style={[styles.searchbar, { backgroundColor: theme.color.background3 }]}
-          inputStyle={[theme.typography.body.regular, { color: theme.color.textPrimary }]}
+          iconColor={colors.onSurfaceVariant}
+          placeholderTextColor={colors.onSurfaceVariant}
+          style={[styles.searchbar, { backgroundColor: colors.surfaceVariant }]}
+          inputStyle={{ color: colors.onSurface }}
         />
       </View>
 
       {conversations === undefined ? (
         <View style={styles.center}>
-          <ActivityIndicator color={theme.color.primary} />
+          <ActivityIndicator color={colors.onSurfaceVariant} />
         </View>
       ) : (
         <FlatList
@@ -208,11 +233,11 @@ const ForwardMessageScreen = ({ route, navigation }: any) => {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           ItemSeparatorComponent={() => (
-            <Divider style={[styles.divider, { backgroundColor: theme.color.borderDefault }]} />
+            <Divider style={[styles.divider, { backgroundColor: colors.outlineVariant }]} />
           )}
           ListEmptyComponent={
             <View style={styles.center}>
-              <Text style={[theme.typography.body.medium, { color: theme.color.textSecondary }]}>
+              <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
                 No conversations found
               </Text>
             </View>

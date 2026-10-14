@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
-import { useTheme } from '@cometchat/chat-uikit-react-native';
+import { useTheme } from 'react-native-paper';
 import { useQuery, useMutation } from 'convex/react';
 import {
   RTCPeerConnection,
@@ -528,7 +528,7 @@ const CallScreen = ({ route, navigation }: any) => {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: theme.color.background1 }]}
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
       {role === 'caller' && call?.status === 'ringing' && (
         <Video
@@ -550,7 +550,7 @@ const CallScreen = ({ route, navigation }: any) => {
           <View
             style={[
               styles.audioAvatar,
-              { backgroundColor: theme.color.extendedPrimary50 },
+              { backgroundColor: theme.colors.primaryContainer },
             ]}
           >
             <UserAvatar
@@ -559,7 +559,7 @@ const CallScreen = ({ route, navigation }: any) => {
               size={140}
               variant="text"
               labelStyle={styles.audioInitials}
-              labelColor={theme.color.primary}
+              labelColor={theme.colors.primary}
             />
           </View>
         </View>
@@ -567,13 +567,13 @@ const CallScreen = ({ route, navigation }: any) => {
 
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <Text style={[styles.peerName, { color: theme.color.textPrimary }]}>
+          <Text style={[styles.peerName, { color: theme.colors.onSurface }]}>
             {peerName}
           </Text>
           <Text
             style={[
               styles.status,
-              { color: theme.color.textSecondary },
+              { color: theme.colors.onSurfaceVariant },
               call?.status === 'active' && styles.statusActive,
             ]}
           >
@@ -585,7 +585,7 @@ const CallScreen = ({ route, navigation }: any) => {
           <View
             style={[
               styles.localPreview,
-              { backgroundColor: theme.color.background3 },
+              { backgroundColor: theme.colors.surfaceVariant },
             ]}
           >
             <RTCView
@@ -604,8 +604,8 @@ const CallScreen = ({ route, navigation }: any) => {
               styles.controlButton,
               {
                 backgroundColor: muted
-                  ? theme.color.primary
-                  : theme.color.background3,
+                  ? theme.colors.primary
+                  : theme.colors.surfaceVariant,
               },
             ]}
             onPress={toggleMute}
@@ -613,7 +613,7 @@ const CallScreen = ({ route, navigation }: any) => {
             <MaterialDesignIcons
               name={muted ? 'microphone-off' : 'microphone'}
               size={26}
-              color={muted ? '#FFFFFF' : theme.color.textPrimary}
+              color={muted ? '#FFFFFF' : theme.colors.onSurface}
             />
           </TouchableOpacity>
 
@@ -624,8 +624,8 @@ const CallScreen = ({ route, navigation }: any) => {
                   styles.controlButton,
                   {
                     backgroundColor: cameraOff
-                      ? theme.color.primary
-                      : theme.color.background3,
+                      ? theme.colors.primary
+                      : theme.colors.surfaceVariant,
                   },
                 ]}
                 onPress={toggleCamera}
@@ -633,20 +633,20 @@ const CallScreen = ({ route, navigation }: any) => {
                 <MaterialDesignIcons
                   name={cameraOff ? 'video-off' : 'video'}
                   size={26}
-                  color={cameraOff ? '#FFFFFF' : theme.color.textPrimary}
+                  color={cameraOff ? '#FFFFFF' : theme.colors.onSurface}
                 />
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   styles.controlButton,
-                  { backgroundColor: theme.color.background3 },
+                  { backgroundColor: theme.colors.surfaceVariant },
                 ]}
                 onPress={flipCamera}
               >
                 <MaterialDesignIcons
                   name="camera-flip-outline"
                   size={26}
-                  color={theme.color.textPrimary}
+                  color={theme.colors.onSurface}
                 />
               </TouchableOpacity>
             </>
@@ -662,12 +662,12 @@ const CallScreen = ({ route, navigation }: any) => {
 
         {!pcReady && !setupError && (
           <View style={styles.loading}>
-            <ActivityIndicator color={theme.color.primary} />
+            <ActivityIndicator color={theme.colors.primary} />
           </View>
         )}
         {setupError && (
           <View style={styles.setupError}>
-            <Text style={[styles.setupErrorText, { color: theme.color.textPrimary }]}>
+            <Text style={[styles.setupErrorText, { color: theme.colors.onSurface }]}>
               {setupError}
             </Text>
           </View>

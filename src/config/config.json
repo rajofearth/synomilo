@@ -79,17 +79,6 @@
               "font": "roboto",
               "size": "default"
           }
-    },
-    "noCode": {
-      "docked": false,
-      "styles": {
-        "buttonBackGround": "#6952d6",
-        "buttonShape": "rounded",
-        "openIcon": "https://nocode-js.cometchat.io/v1/resources/docked_open_icon.svg",
-        "closeIcon": "https://nocode-js.cometchat.io/v1/resources/docked_close_icon.svg",
-        "customJs": "",
-        "customCss": ""
-      }
     }
   },
   "name": "ttttt",

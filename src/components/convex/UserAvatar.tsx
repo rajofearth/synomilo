@@ -20,8 +20,8 @@ import {
  * The one place an avatar photo is drawn.
  *
  * Every avatar render site in the app routes through here so that:
- *   - the URL comes from `resolveAvatar` (Convex `avatarUrl` wins, CometChat
- *     `avatar` second, initials last), and
+ *   - the URL comes from `resolveAvatar` (the Convex `avatarUrl` wins, a bare
+ *     `avatar` field second, initials last), and
  *   - a URL that fails to load degrades to the same initials instead of
  *     rendering an empty transparent box. Before this existed, none of the
  *     avatar `<Image>`s in the app had an `onError` at all.
@@ -34,7 +34,7 @@ import {
  * their avatar out of raw `View`/`Image`/`Text` primitives.
  */
 type UserAvatarProps = {
-  /** Convex projection and/or raw CometChat user. */
+  /** The user projection (or any object carrying an avatar field). */
   entity?: AvatarEntity;
   /** Fallback label for initials. */
   name?: string | null;

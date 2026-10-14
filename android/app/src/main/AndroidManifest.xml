@@ -6,7 +6,6 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -69,29 +68,25 @@
         com.google.firebase.MESSAGING_EVENT:
           1. io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService
              (from @react-native-firebase/messaging)  <- the one we keep
-          2. com.cometchat.pushnotification.reactnative.CometChatFcmService
-             (from @cometchat/push-notifications-react-native)
-          3. com.google.firebase.messaging.FirebaseMessagingService
+          2. com.google.firebase.messaging.FirebaseMessagingService
              (the Firebase SDK base class, android:priority="-500")
 
-        Android binds MESSAGING_EVENT to exactly ONE service, so which of 1/2/3
-        won was undefined - a message could land in a service that ignores it,
-        which is the strongest Android-side explanation for "sometimes it rings,
-        sometimes it doesn't". It also meant onNewToken could go to a service with
-        no JS listener, silently killing push-token refresh.
+        Android binds MESSAGING_EVENT to exactly ONE service, so which one won was
+        undefined - a message could land in a service that ignores it, which is the
+        strongest Android-side explanation for "sometimes it rings, sometimes it
+        doesn't". It also meant onNewToken could go to a service with no JS listener,
+        silently killing push-token refresh.
 
-        (2) is removed outright: this app's calls are Convex + react-native-webrtc,
-        never CometChat Calls, so CometChatFcmService was a third, competing ringer
-        that could start IncomingCallService and try to CometChat.acceptCall() a
-        sessionId this app never created.
-        (3) is removed because (1) is always present and always wins on priority;
+        The third claimant that used to sit here (the push package's own FCM service) is gone with
+        that package; the `tools:node="remove"` marker
+        for it was dropped with the package, because a manifest merger rule naming a
+        class that no longer exists is itself a build error under `tools:node="remove"`
+        on a manifest that no longer declares it.
+        (2) is removed because (1) is always present and always wins on priority;
         keeping the base-class fallback buys nothing but another claimant.
         Direct-boot (pre-unlock) push reception is the one capability lost, and it
         is irrelevant for a call UI that needs the keyguard anyway.
       -->
-      <service
-        android:name="com.cometchat.pushnotification.reactnative.CometChatFcmService"
-        tools:node="remove" />
       <service
         android:name="com.google.firebase.messaging.FirebaseMessagingService"
         tools:node="remove" />
@@ -99,8 +94,8 @@
       <!--
         Notifee ships its foreground service as foregroundServiceType="shortService",
         which Android 14+ kills after 3 minutes - useless for a call. Override it to
-        phoneCall. MANAGE_OWN_CALLS and FOREGROUND_SERVICE_PHONE_CALL are merged in by
-        the CometChat push library, which satisfies the Android 14 prerequisite for
+        phoneCall. MANAGE_OWN_CALLS and FOREGROUND_SERVICE_PHONE_CALL are declared by
+        @notifee/react-native itself, which satisfies the Android 14 prerequisite for
         starting a phoneCall-typed foreground service.
       -->
       <service

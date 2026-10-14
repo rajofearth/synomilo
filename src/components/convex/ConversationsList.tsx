@@ -15,6 +15,7 @@ import dayjs from 'dayjs';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
+import { APP_NAME } from '../../utils/AppConstants';
 import UserAvatar from './UserAvatar';
 
 type ConversationRow = {
@@ -45,7 +46,7 @@ const formatTime = (ts: number): string => {
 
 const ConversationsList = ({ navigation }: any) => {
   const { colors } = useTheme();
-  const { token, user } = useSession();
+  const { token } = useSession();
   const conversations = useQuery(
     api.conversations.list,
     token ? { token } : 'skip',
@@ -98,35 +99,23 @@ const ConversationsList = ({ navigation }: any) => {
       edges={['top']}
     >
       {/**
-       * Two actions, deliberately: "+" starts a conversation, the avatar is you.
-       * They used to be a title, an avatar and a FAB over the list, which meant
-       * the primary action floated over a row and was easy to hit by accident.
+       * The header names the app, not the screen: "Chats" here duplicated the tab
+       * label directly below it, and every other tab header in the app does the same
+       * (Calls names itself once, in one place).
+       *
+       * The profile avatar is gone rather than moved. Profile is a bottom tab, so the
+       * avatar in this header was a second, fatter route to a screen one tap away —
+       * and it was the only thing making the header a three-element row.
+       *
+       * That leaves a title and the one action worth having. The title takes `flex: 1`
+       * so it stays left-aligned against the 16pt gutter shared by every other screen
+       * header, and the filled "+" carries the right-hand weight on its own — the
+       * WhatsApp arrangement, where the only two things in the bar are what it is and
+       * what you can do next.
        */}
       <View style={styles.header}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.avatarButton,
-            {
-              backgroundColor: colors.surfaceVariant,
-              opacity: pressed ? 0.6 : 1,
-            },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Open your profile"
-          onPress={() => navigation.navigate('Profile')}
-        >
-          <UserAvatar
-            entity={user}
-            name={user?.displayName}
-            size={36}
-            variant="text"
-            labelStyle={styles.avatarText}
-            labelColor={colors.onSurfaceVariant}
-          />
-        </Pressable>
-
         <Text variant="headlineMedium" style={styles.headerTitle}>
-          Chats
+          {APP_NAME}
         </Text>
 
         <Pressable
@@ -304,17 +293,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     flex: 1,
-  },
-  avatarButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 13,
-    fontWeight: '700',
   },
   iconButton: {
     width: 40,

@@ -42,8 +42,9 @@ echo
 echo "=== [2/2] TypeScript (own code only) ==="
 npx tsc --noEmit >"$TMP/tsc-raw.txt" 2>&1
 grep -E '^(src|convex|App|__tests__)/' "$TMP/tsc-raw.txt" | sort >"$TMP/tsc.txt"
-OWN=$(grep -c '' "$TMP/tsc.txt" 2>/dev/null || echo 0)
+OWN=$(grep -c '' "$TMP/tsc.txt" 2>/dev/null | head -1)
 [ -z "$OWN" ] && OWN=0
+OWN=$(echo "$OWN" | tr -d '\r\n ' )
 
 if [ "$OWN" -gt "$BASELINE_TSC" ]; then
   echo "FAIL: own-code TS errors rose from $BASELINE_TSC to $OWN."

@@ -9,9 +9,7 @@ import React, {
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useMutation, useQuery } from "convex/react";
-import { CometChatPushNotifications } from "@cometchat/push-notifications-react-native";
 import { api } from "../../convex/_generated/api";
-import { clearCometChatSession } from "./cometchatSession";
 import { resetToLogin } from "../navigation/NavigationService";
 
 const TOKEN_KEY = "synomilo.convex.token";
@@ -277,12 +275,6 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
         await AsyncStorage.multiRemove([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(
           () => {},
         );
-        try {
-          CometChatPushNotifications.unregister();
-        } catch {}
-        // Same reasoning for the calls layer: a stored token that is no longer ours means
-        // a new sign-in already got in, so its CometChat session must survive.
-        await clearCometChatSession();
       }
     } finally {
       signingOutRef.current = false;

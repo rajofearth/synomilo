@@ -2,7 +2,7 @@ module.exports = {
   preset: 'react-native',
   setupFiles: ['<rootDir>/jest.setup.js'],
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@react-navigation|convex|@notifee|@noble|dayjs|@cometchat|react-native-.*|@react-native-firebase)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@react-navigation|convex|@notifee|@noble|dayjs|react-native-.*|@react-native-firebase)/)',
   ],
   moduleNameMapper: {
     '\\.png$': '<rootDir>/__mocks__/fileMock.js',

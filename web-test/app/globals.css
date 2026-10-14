@@ -1,0 +1,574 @@
+:root {
+  /* Mirrors the dark half of src/theme/paperTheme.ts. Strictly achromatic:
+     every value satisfies R === G === B, matching the mobile app. */
+  --background: #0b0b0b;
+  --on-background: #f2f2f2;
+  --surface: #131313;
+  --surface-variant: #1f1f1f;
+  --on-surface-variant: #a0a0a0;
+  --outline: #6b6b6b;
+  --outline-variant: #2e2e2e;
+  --primary: #ededed;
+  --on-primary: #0b0b0b;
+  --raised: #242424;
+  --alert-bg: #ffffff;
+  --alert-fg: #000000;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--background);
+  color: var(--on-background);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+h1 {
+  font-size: 18px;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--on-surface-variant);
+}
+
+a {
+  color: var(--primary);
+}
+
+.page {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 16px 16px 64px;
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.topbar .spacer {
+  flex: 1 1 auto;
+}
+
+.convex-url {
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+/* ---------- layout ---------- */
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sticky-log {
+  position: sticky;
+  top: 92px;
+}
+
+/* ---------- panels ---------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  min-width: 0;
+}
+
+.panel > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.panel > header .spacer {
+  flex: 1 1 auto;
+}
+
+.hint {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+/* ---------- controls ---------- */
+
+button {
+  font: inherit;
+  color: var(--on-primary);
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--on-background);
+  border-color: var(--outline);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+button.small {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+button.danger {
+  background: #2e2e2e;
+  border-color: #6b6b6b;
+  color: #ffffff;
+}
+
+button.hero {
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+input[type='text'],
+input[type='password'],
+textarea {
+  font: inherit;
+  color: var(--on-background);
+  background: var(--surface-variant);
+  border: 1px solid var(--outline);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+input:focus,
+textarea:focus,
+button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--on-surface-variant);
+  margin-bottom: 4px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.row > .grow {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* ---------- avatar ---------- */
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--raised);
+  border: 1px solid var(--outline);
+  overflow: hidden;
+  flex: none;
+  font-weight: 700;
+  color: var(--on-background);
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar-name {
+  font-weight: 700;
+}
+
+.avatar-sub {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+/* ---------- badges ---------- */
+
+.badge {
+  display: inline-block;
+  border: 1px solid var(--outline);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--surface-variant);
+}
+
+.badge.big {
+  font-size: 18px;
+  padding: 8px 18px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.badge.on {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+
+.keyvals {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.keyvals dt {
+  color: var(--on-surface-variant);
+}
+
+.keyvals dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+/* ---------- error / notice ---------- */
+
+.alert {
+  background: var(--alert-bg);
+  color: var(--alert-fg);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+  margin-top: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.alert.notice {
+  background: var(--raised);
+  color: var(--on-background);
+  border: 1px solid var(--outline);
+  font-weight: 400;
+}
+
+.alert .alert-head {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* ---------- incoming call ---------- */
+
+.incoming {
+  border: 2px solid var(--primary);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--raised);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(237, 237, 237, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(237, 237, 237, 0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .incoming {
+    animation: none;
+  }
+}
+
+.incoming-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 10px 0 12px;
+}
+
+/* ---------- call screen ---------- */
+
+.videos {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 700px) {
+  .videos {
+    grid-template-columns: 1fr;
+  }
+}
+
+.video-box {
+  position: relative;
+  background: #000000;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-box video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.video-box.local video {
+  transform: scaleX(-1);
+}
+
+.video-tag {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--outline);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--on-background);
+}
+
+.video-empty {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  padding: 10px;
+  text-align: center;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.state-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ---------- chat ---------- */
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--surface-variant);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--outline-variant);
+  background: var(--raised);
+  align-self: flex-start;
+}
+
+.bubble.mine {
+  align-self: flex-end;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+
+.bubble-meta {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 4px;
+  display: flex;
+  gap: 8px;
+}
+
+.empty {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  padding: 12px;
+  text-align: center;
+}
+
+/* ---------- event log ---------- */
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.log-body {
+  height: 620px;
+  overflow-y: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background: #050505;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.log-time {
+  color: var(--outline);
+}
+
+.log-tag {
+  color: var(--on-surface-variant);
+}
+
+.log-msg {
+  word-break: break-word;
+}
+
+.log-row.error .log-msg {
+  color: #ffffff;
+  background: var(--alert-bg);
+  color: var(--alert-fg);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-weight: 700;
+}
+
+.log-row.warn .log-msg {
+  text-decoration: underline;
+}
+
+.log-row.good .log-msg {
+  font-weight: 700;
+}
+
+.log-row.signal .log-msg {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.log-row.debug .log-msg {
+  color: var(--on-surface-variant);
+}
+
+/* Kept in the render tree (rather than display:none) so the browser is happy to
+   call play() on it - that call is what unlocks autoplay for the document. */
+.hidden-audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  left: -10000px;
+}

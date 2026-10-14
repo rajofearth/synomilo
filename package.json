@@ -10,10 +10,6 @@
     "test": "jest"
   },
   "dependencies": {
-    "@cometchat/calls-sdk-react-native": "^4.4.0",
-    "@cometchat/chat-sdk-react-native": "^4.1.0",
-    "@cometchat/chat-uikit-react-native": "^5.5.1",
-    "@cometchat/push-notifications-react-native": "^1.0.0",
     "@noble/hashes": "^2.4.0",
     "@notifee/react-native": "^9.1.8",
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -48,7 +44,6 @@
     "react-native-svg": "^15.13.0",
     "react-native-url-polyfill": "^4.0.0",
     "react-native-video": "^6.16.1",
-    "react-native-vision-camera": "^4.7.2",
     "react-native-webrtc": "^124.0.7",
     "zustand": "^5.0.8"
   },

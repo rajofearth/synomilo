@@ -40,6 +40,68 @@ type FoundUser = {
 const normalize = (value: string): string => value.trim().toLowerCase();
 
 /**
+ * A message that leaked straight to the screen.
+ *
+ * `convex.query` does not reject with the error the server threw. It rejects with the
+ * Convex client's own diagnostic for the query, built in `browser/logging.ts` as
+ *
+ *   `[CONVEX Q(users:findByUsername)] <server error message>\n  Called by client`
+ *
+ * — and that is a plain `Error`, so it has no `ConvexError.data` to unwrap. The whole
+ * thing is about 120 characters, which is inside `convexErrorMessage`'s 220-character
+ * pass-through, so the helper handed it back verbatim and the screen rendered the
+ * Convex plumbing in full underneath the search field.
+ *
+ * A `ConvexError` is the other case and is not this one: when the server throws one,
+ * `.data` carries the copy a human wrote (`requireUser` sends "Your session has expired.
+ * Please log in again."), and `convexErrorMessage` already returns exactly that.
+ */
+const looksLikeConvexDiagnostic = (text: string): boolean =>
+  /\[CONVEX\b|Called by client|Uncaught\s+\w*Error:|^\s*at\s|node_modules/m.test(text);
+
+/**
+ * Transport wording, which is true but not something anyone can act on. React Native
+ * surfaces these from the WebSocket layer itself, so they arrive as plain `Error`s with
+ * no Convex prefix at all: `Network request failed`, `Failed to fetch`, or
+ * `WebSocket is closed`. They get the caller's connection-flavoured fallback instead.
+ */
+const looksLikeTransportFailure = (text: string): boolean =>
+  /network request failed|failed to fetch|websocket|connection (closed|failed|refused)|timed? ?out/i.test(
+    text,
+  );
+
+/**
+ * The last gate before a string is rendered.
+ *
+ * `convexErrorMessage` still does the reading — it is what recovers the server's own
+ * message out of a `ConvexError` — but anything that still reads as a stack, a
+ * `[CONVEX …]` prefix or a node_modules path is replaced with the caller's own fallback,
+ * as is transport wording. The screen can therefore never show copy that is about Convex
+ * or about sockets rather than about the person who is using it.
+ */
+const friendlyError = (err: unknown, fallback: string): string => {
+  const candidate = convexErrorMessage(err, '').trim();
+  if (
+    candidate.length > 0 &&
+    !looksLikeConvexDiagnostic(candidate) &&
+    !looksLikeTransportFailure(candidate)
+  ) {
+    return candidate;
+  }
+  return fallback;
+};
+
+const COPY = {
+  signedOut: 'You are signed out. Sign in again to search for contacts.',
+  tooShort: 'Enter a username of at least 2 characters.',
+  thatIsYou: 'That is you. Search for someone else to start a chat.',
+  searchOffline:
+    'Could not reach the server. Check your connection and try again.',
+  searchFailed: 'Could not search right now. Try again in a moment.',
+  chatFailed: 'Could not open the chat. Check your connection and try again.',
+};
+
+/**
  * The single entry point to starting a conversation.
  *
  * Replaces the old `Users` tab (a full directory with a client-side filter) and the
@@ -76,11 +138,11 @@ const AddContactScreen = ({ navigation }: any) => {
   const submit = useCallback(async () => {
     const candidate = normalize(username);
     if (!token) {
-      setError('You are not signed in.');
+      setError(COPY.signedOut);
       return;
     }
     if (candidate.length < 2) {
-      setError('Enter a username of at least 2 characters.');
+      setError(COPY.tooShort);
       return;
     }
 
@@ -88,7 +150,7 @@ const AddContactScreen = ({ navigation }: any) => {
     if (user && candidate === normalize(user.username)) {
       setMatch(null);
       setSearched(true);
-      setError('That is you. Search for someone else to start a chat.');
+      setError(COPY.thatIsYou);
       return;
     }
 
@@ -110,9 +172,7 @@ const AddContactScreen = ({ navigation }: any) => {
       if (seq !== searchSeq.current) {
         return;
       }
-      setError(
-        convexErrorMessage(err, 'Could not reach the server. Check your connection.'),
-      );
+      setError(friendlyError(err, COPY.searchOffline));
     } finally {
       if (seq === searchSeq.current) {
         setBusy(false);
@@ -138,7 +198,7 @@ const AddContactScreen = ({ navigation }: any) => {
         title: match.displayName,
       });
     } catch (err) {
-      setError(convexErrorMessage(err, 'Could not open the chat. Please try again.'));
+      setError(friendlyError(err, COPY.chatFailed));
       setOpening(false);
     }
   }, [token, match, opening, createDM, navigation]);
@@ -161,14 +221,14 @@ const AddContactScreen = ({ navigation }: any) => {
    */
   const onSearch = useCallback(() => {
     submit().catch(err => {
-      setError(convexErrorMessage(err, 'Could not search. Please try again.'));
+      setError(friendlyError(err, COPY.searchFailed));
       setBusy(false);
     });
   }, [submit]);
 
   const onOpenChat = useCallback(() => {
     openChat().catch(err => {
-      setError(convexErrorMessage(err, 'Could not open the chat. Please try again.'));
+      setError(friendlyError(err, COPY.chatFailed));
       setOpening(false);
     });
   }, [openChat]);
@@ -305,7 +365,7 @@ const AddContactScreen = ({ navigation }: any) => {
                 variant="bodyMedium"
                 style={[styles.noticeText, { color: colors.onSurfaceVariant }]}
               >
-                No account with the username @{normalizedUsername}.
+                No user with that username.
               </Text>
             </View>
           ) : null}

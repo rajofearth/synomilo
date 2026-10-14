@@ -102,23 +102,6 @@ jest.mock('@notifee/react-native', () => {
   return { __esModule: true, default: nc, AndroidImportance: nc.AndroidImportance };
 });
 
-jest.mock('react-native-vision-camera', () => {
-  const { View } = require('react-native');
-  return {
-    Camera: View,
-    useCameraDevice: () => null,
-    useCameraPermission: () => ({ hasPermission: false, requestPermission: jest.fn() }),
-    useCodeScanner: () => ({ codeScannerView: null }),
-  };
-});
-
-jest.mock('@cometchat/push-notifications-react-native', () => ({
-  registerBackgroundCallTask: jest.fn(),
-  addPushListener: jest.fn(),
-  removePushListener: jest.fn(),
-  handlePushMessage: jest.fn(async () => ({})),
-}));
-
 jest.mock('convex/server', () => ({
   router: {},
   internal: {},
