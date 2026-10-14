@@ -44,6 +44,12 @@ export interface PendingCall {
  * Headless entry point for FCM data messages. Only incoming-call messages need
  * client-side work: everything else is displayed by the system notification.
  *
+ * ONE ring for both paths. The notification posted below is identical whether the
+ * app is foreground or background, because the sound of an incoming call must not
+ * depend on which of the two states the user happens to be in. Suppressing it
+ * outright in the foreground (what this function used to do) is what produced
+ * "when I'm already in the app, it just goes mute".
+ *
  * `suppressWhenForeground` is passed ONLY by the foreground handler in App.tsx
  * (`messaging().onMessage`, which by definition only fires while the app is
  * visible). It is deliberately not derived from `AppState` inside this function:
@@ -52,6 +58,11 @@ export interface PendingCall {
  * there is not evidence that anyone is looking at the screen. Getting that wrong
  * means either double-ringing in the foreground or - far worse - silently never
  * ringing in the background.
+ *
+ * What the flag now controls is only the notification's own Accept/Decline
+ * buttons: with the app open, `IncomingCallOverlay` is already on screen with a
+ * live Accept/Decline for the same call, and two Accept buttons for one call is
+ * how a user answers a call that has already ended.
  */
 export async function handleDataMessage(
   data: Record<string, unknown> | undefined,
@@ -61,37 +72,37 @@ export async function handleDataMessage(
     return;
   }
 
-  // Terminal signals. These do not exist on the server today (convex/calls.ts
-  // `end`/`markTimedOut` schedule no push), but honouring them costs nothing and
-  // means the client is already correct the moment the backend lands them.
+  // Terminal signals: the callee hung up, declined, or the ring window expired on
+  // the server. These are what kill the notification and the ring screen.
   const callAction = typeof data.callAction === 'string' ? data.callAction : '';
   if (callAction === 'cancelled' || callAction === 'ended') {
     await teardownRinging(data.callId);
     return;
   }
 
-  if (options?.suppressWhenForeground && AppState.currentState === 'active') {
-    // `IncomingCallOverlay` is already showing a full-screen Accept/Decline card
-    // for this call, driven by a live Convex query. Posting the notification too
-    // gave the user two racing Accept buttons for the same call.
-    return;
-  }
+  const inAppIsVisible =
+    !!options?.suppressWhenForeground && AppState.currentState === 'active';
 
-  await showIncomingCallNotification({
-    callId: data.callId,
-    callerName:
-      typeof data.callerName === 'string' ? data.callerName : 'Unknown',
-    type: data.callType === 'video' ? 'video' : 'audio',
-  });
+  await showIncomingCallNotification(
+    {
+      callId: data.callId,
+      callerName:
+        typeof data.callerName === 'string' ? data.callerName : '',
+      type: data.callType === 'video' ? 'video' : 'audio',
+    },
+    { suppressActions: inAppIsVisible },
+  );
 }
 
 /**
  * Stop everything a ringing call put up: the notification, any deferred accept, and
  * the lock-screen ring activity. Idempotent - it can be reached from a background
- * push that is delivered twice and from a decline.
+ * push that is delivered twice, from a decline, and from a local accept/decline in
+ * the app.
  *
  * `dismissActivity` is false when the ring screen has already finished itself
- * (the user just tapped its own Accept or Decline button).
+ * (the user just tapped its own Accept or Decline button), or when the call was
+ * handled while the app was foregrounded, where there is no ring activity.
  */
 export async function teardownRinging(
   callId: string,
@@ -112,6 +123,14 @@ export async function teardownRinging(
  * The activity is `noHistory` and self-dismisses after the ring window, but
  * declining from the notification must not leave a live ring screen behind the
  * notification shade.
+ *
+ * `RingScreenState.showing` is false in one case that matters: a terminal push
+ * that beats the full-screen intent to the device. The ring screen has not been
+ * created yet, so this is a no-op, and without a check on the activity's own side
+ * the keyguard intent then fires and presents a ringing screen for a call that is
+ * already over. IncomingCallActivity.onCreate refuses to draw unless a ringing
+ * notification (`data.type === "call"`) is currently posted, which closes that race
+ * without a timer here.
  */
 async function dismissRingingActivity(): Promise<void> {
   if (Platform.OS !== 'android') {
@@ -200,7 +219,7 @@ export async function handleNotifeeBackgroundEvent(event: any): Promise<void> {
       await rememberPendingCall({
         callId: data.callId,
         callType: data.callType === 'video' ? 'video' : 'audio',
-        callerName: data.peerName ?? 'Unknown',
+        callerName: data.peerName || '',
         action: 'resume',
         at: Date.now(),
       });
@@ -233,7 +252,7 @@ export async function handleNotifeeBackgroundEvent(event: any): Promise<void> {
     await rememberPendingCall({
       callId,
       callType: data.callType === 'video' ? 'video' : 'audio',
-      callerName: data.callerName ?? 'Unknown',
+      callerName: data.callerName || '',
       action: 'accept',
       at: Date.now(),
     });

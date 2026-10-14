@@ -7,11 +7,9 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  AppState,
   Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useTheme } from 'react-native-paper';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -19,11 +17,20 @@ import { useSession } from '../../auth/SessionProvider';
 import { navigate } from '../../navigation/NavigationService';
 import { convexErrorMessage } from '../../utils/convexError';
 import UserAvatar from '../convex/UserAvatar';
-import {
-  dismissAllCallNotifications,
-  dismissCallNotification,
-} from '../../notifications/callNotifications';
+import { reconcileCallNotifications } from '../../notifications/callNotifications';
+import { teardownRinging } from '../../notifications/background';
 
+/**
+ * The in-app half of incoming-call UI, shown when the user is already in the app.
+ *
+ * The other half - the lock-screen ring activity - is the SAME state machine seen
+ * from outside the app: one Convex query (`calls.incoming`) and one ringing
+ * Notifee notification, in both cases. This overlay used to suppress that
+ * notification entirely while the app was visible, which meant a call arriving
+ * with the app open produced a silent card and nothing else. It now leaves the
+ * ringing notification alone and only owns the Accept/Decline decision, which is
+ * why nothing here cancels the notification on an AppState change any more.
+ */
 const IncomingCallOverlay: React.FC = () => {
   const { token } = useSession();
   const theme = useTheme();
@@ -60,13 +67,15 @@ const IncomingCallOverlay: React.FC = () => {
     setBusy(true);
     try {
       await acceptCall({ token, callId: incoming._id as any });
-      dismissCallNotification(incoming._id);
-      const callerName = incoming.caller?.displayName ?? 'Unknown';
+      // `dismissActivity: false` - there is no ring activity over a foreground app.
+      // Everything a ring puts up comes down here: notification, deferred accept,
+      // ring screen.
+      await teardownRinging(incoming._id, false);
       navigate('CallScreen', {
         callId: incoming._id,
         type: incoming.type,
         role: 'callee',
-        peerName: callerName,
+        peerName: callerNameOf(incoming),
       });
     } catch (error) {
       Alert.alert(
@@ -85,7 +94,7 @@ const IncomingCallOverlay: React.FC = () => {
     setBusy(true);
     try {
       await rejectCall({ token, callId: incoming._id as any });
-      dismissCallNotification(incoming._id);
+      await teardownRinging(incoming._id, false);
     } catch {} finally {
       setBusy(false);
     }
@@ -99,40 +108,19 @@ const IncomingCallOverlay: React.FC = () => {
    * - cancelled every `call:*` notification in the tray. This component mounts on
    * every sign-in, so a sign-in that raced an incoming call silently killed the
    * ring.
+   *
+   * Scoped to `call:*` rather than "all call notifications" on purpose: an ongoing
+   * call is a different notification with a different lifetime, and this effect
+   * must not be able to tear down the notification for a call already connected.
    */
   useEffect(() => {
     if (incomingId) {
       return;
     }
     if (querySettled) {
-      dismissAllCallNotifications();
+      reconcileCallNotifications([]);
     }
   }, [incomingId, querySettled]);
-
-  /**
-   * Foreground de-duplication. This overlay is itself a full-screen ring UI driven
-   * by a live Convex query, so while the user is looking at the app the OS
-   * notification is a second copy of the same thing with a second Accept button -
-   * and the user had two racing ways to answer the same call.
-   *
-   * Only when the app is genuinely visible. The background path cannot use this
-   * test: a headless JS task has never seen a lifecycle callback, so
-   * `AppState.currentState` there is not evidence that anyone is looking.
-   */
-  useEffect(() => {
-    if (!incomingId) {
-      return;
-    }
-    const subscription = AppState.addEventListener('change', state => {
-      if (state === 'active') {
-        dismissCallNotification(incomingId);
-      }
-    });
-    if (AppState.currentState === 'active') {
-      dismissCallNotification(incomingId);
-    }
-    return () => subscription.remove();
-  }, [incomingId]);
 
   useEffect(() => {
     if (!incomingId) {
@@ -164,10 +152,10 @@ const IncomingCallOverlay: React.FC = () => {
     return null;
   }
 
-  const callerName = incoming.caller?.displayName ?? 'Unknown';
+  const callerName = callerNameOf(incoming);
   const pulseScale = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 1.08],
+    outputRange: [1, 1.06],
   });
 
   return (
@@ -177,16 +165,16 @@ const IncomingCallOverlay: React.FC = () => {
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.body}>
           <Text
-            style={[styles.callingLabel, { color: theme.colors.onSurfaceVariant }]}
+            style={[styles.eyebrow, { color: theme.colors.onSurfaceVariant }]}
           >
-            Incoming {incoming.type === 'video' ? 'video' : 'voice'} call
+            Incoming call
           </Text>
           <View style={styles.avatarWrap}>
             <Animated.View
               style={[
                 styles.pulseRing,
                 {
-                  borderColor: theme.colors.primary,
+                  borderColor: theme.colors.outline,
                   transform: [{ scale: pulseScale }],
                 },
               ]}
@@ -203,7 +191,7 @@ const IncomingCallOverlay: React.FC = () => {
                 size={140}
                 variant="text"
                 labelStyle={styles.avatarText}
-                labelColor={theme.colors.primary}
+                labelColor={theme.colors.onPrimaryContainer}
               />
             </View>
           </View>
@@ -212,48 +200,74 @@ const IncomingCallOverlay: React.FC = () => {
           </Text>
         </View>
 
+        {/*
+          The same two affordances the lock-screen ring screen draws, in the same
+          order and the same treatment, so the foreground and background paths feel
+          like one thing. Achromatic only: the pair used to be red and green, which
+          is the only colour in this product.
+        */}
         <View style={styles.actions}>
-          <View style={styles.action}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.declineButton]}
-              onPress={decline}
-              disabled={busy}
-            >
-              <MaterialDesignIcons
-                name="phone-hangup"
-                size={30}
-                color="#FFFFFF"
-              />
-            </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Decline call"
+            disabled={busy}
+            onPress={decline}
+            style={[
+              styles.pill,
+              {
+                borderColor: theme.colors.outline,
+                backgroundColor: theme.colors.surfaceVariant,
+              },
+              busy && styles.pillDisabled,
+            ]}
+          >
             <Text
-              style={[styles.actionLabel, { color: theme.colors.onSurface }]}
+              style={[styles.pillLabel, { color: theme.colors.onSurface }]}
             >
               Decline
             </Text>
-          </View>
-          <View style={styles.action}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.acceptButton]}
-              onPress={accept}
-              disabled={busy}
-            >
-              {busy ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <MaterialDesignIcons name="phone" size={30} color="#FFFFFF" />
-              )}
-            </TouchableOpacity>
-            <Text
-              style={[styles.actionLabel, { color: theme.colors.onSurface }]}
-            >
-              Accept
-            </Text>
-          </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Accept call"
+            disabled={busy}
+            onPress={accept}
+            style={[
+              styles.pill,
+              { backgroundColor: theme.colors.primary },
+              busy && styles.pillDisabled,
+            ]}
+          >
+            {busy ? (
+              <ActivityIndicator color={theme.colors.onPrimary} />
+            ) : (
+              <Text
+                style={[styles.pillLabel, { color: theme.colors.onPrimary }]}
+              >
+                Accept
+              </Text>
+            )}
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     </View>
   );
 };
+
+/**
+ * The caller's name, or the state of the call when there is no name.
+ *
+ * `calls.incoming` joins the caller through `publicUser`, which always carries
+ * `displayName`; the fallbacks are for the window between the row being created
+ * and the user document existing. "Unknown" as a rendered string is never the
+ * right answer - it reads as a bug, which is exactly how it was reported.
+ */
+const callerNameOf = (call: {
+  caller?: { displayName?: string | null; username?: string | null } | null;
+}): string =>
+  call.caller?.displayName?.trim() ||
+  call.caller?.username?.trim() ||
+  'Incoming call';
 
 export default IncomingCallOverlay;
 
@@ -271,23 +285,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  callingLabel: {
-    fontSize: 16,
+  eyebrow: {
+    fontSize: 13,
+    letterSpacing: 1.8,
+    textTransform: 'uppercase',
     marginBottom: 24,
   },
   avatarWrap: {
-    width: 140,
-    height: 140,
+    width: 148,
+    height: 148,
     alignItems: 'center',
     justifyContent: 'center',
   },
   pulseRing: {
     position: 'absolute',
-    width: 140,
-    height: 140,
-    borderRadius: 70,
+    width: 148,
+    height: 148,
+    borderRadius: 74,
     borderWidth: 2,
-    opacity: 0.5,
   },
   avatar: {
     width: 140,
@@ -297,38 +312,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: {
-    fontSize: 48,
+    fontSize: 44,
     fontWeight: '700',
   },
   name: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '700',
-    marginTop: 20,
+    textAlign: 'center',
+    marginTop: 24,
+    paddingHorizontal: 24,
   },
   actions: {
     flexDirection: 'row',
-    justifyContent: 'space-evenly',
     alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
     paddingBottom: 56,
   },
-  action: {
-    alignItems: 'center',
-  },
-  actionButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+  pill: {
+    flex: 1,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 1,
+    borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  declineButton: {
-    backgroundColor: '#E5484D',
+  pillDisabled: {
+    opacity: 0.5,
   },
-  acceptButton: {
-    backgroundColor: '#2FBF71',
-  },
-  actionLabel: {
-    fontSize: 13,
-    marginTop: 8,
+  pillLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

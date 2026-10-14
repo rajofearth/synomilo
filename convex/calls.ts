@@ -6,6 +6,12 @@ import { internal } from "./_generated/api";
 import { publicUser, pushTokensForUser, requireUser } from "./lib/helpers";
 
 const RING_TIMEOUT_MS = 60000;
+/**
+ * How long an `active` call is treated as genuinely in progress before it is
+ * considered abandoned. Rows abandoned by a killed app used to permanently
+ * block the user from answering any new call.
+ */
+const ACTIVE_CALL_TTL_MS = 4 * 60 * 60 * 1000;
 
 async function loadCall(
   ctx: QueryCtx | MutationCtx,
@@ -225,16 +231,31 @@ export const accept = mutation({
         status: call.status,
       };
     }
-    const busy = await ctx.db
+    // Busy check. An `active` row is only evidence of a live call if it was
+    // answered recently - otherwise it is a row abandoned by a killed app or a
+    // dropped network, and those used to block every future answer with
+    // "You are already in a call" even though the user was on no call at all.
+    const now = Date.now();
+    const staleBefore = now - ACTIVE_CALL_TTL_MS;
+    const activeAsCallee = await ctx.db
       .query("calls")
       .withIndex("by_callee_status", (q) =>
         q.eq("calleeId", me._id).eq("status", "active"),
       )
-      .first();
-    if (busy) {
-      throw new ConvexError("You are already in a call");
+      .collect();
+    for (const stale of activeAsCallee) {
+      const startedAt = stale.answeredAt ?? stale.createdAt;
+      if (startedAt < staleBefore) {
+        // Abandoned: close it out so it can never block again.
+        await ctx.db.patch(stale._id, {
+          status: "ended",
+          endedAt: now,
+          endReason: "failed",
+        });
+      } else {
+        throw new ConvexError("You are already on another call");
+      }
     }
-    const now = Date.now();
     await ctx.db.patch(callId, { status: "active", answeredAt: now });
     return { ok: true as const, answeredAt: now, serverNow: now };
   },

@@ -613,7 +613,7 @@ const CallScreen = ({ route, navigation }: any) => {
             <MaterialDesignIcons
               name={muted ? 'microphone-off' : 'microphone'}
               size={26}
-              color={muted ? '#FFFFFF' : theme.colors.onSurface}
+              color={muted ? theme.colors.onPrimary : theme.colors.onSurface}
             />
           </TouchableOpacity>
 
@@ -633,7 +633,9 @@ const CallScreen = ({ route, navigation }: any) => {
                 <MaterialDesignIcons
                   name={cameraOff ? 'video-off' : 'video'}
                   size={26}
-                  color={cameraOff ? '#FFFFFF' : theme.colors.onSurface}
+                  color={
+                    cameraOff ? theme.colors.onPrimary : theme.colors.onSurface
+                  }
                 />
               </TouchableOpacity>
               <TouchableOpacity
@@ -652,11 +654,24 @@ const CallScreen = ({ route, navigation }: any) => {
             </>
           )}
 
+          {/*
+            Hangup used to be a hardcoded red, the only hue anywhere in this
+            product. It now reads as "the filled one" against the outlined
+            mute/camera controls, which is the same affordance the ring screen
+            uses for Accept/Decline.
+          */}
           <TouchableOpacity
-            style={[styles.controlButton, { backgroundColor: '#E5484D' }]}
+            style={[
+              styles.controlButton,
+              { backgroundColor: theme.colors.primary },
+            ]}
             onPress={() => hangUp()}
           >
-            <MaterialDesignIcons name="phone-hangup" size={26} color="#FFFFFF" />
+            <MaterialDesignIcons
+              name="phone-hangup"
+              size={26}
+              color={theme.colors.onPrimary}
+            />
           </TouchableOpacity>
         </View>
 

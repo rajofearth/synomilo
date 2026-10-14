@@ -7,10 +7,32 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!--
+      Required by the `phoneCall` foregroundServiceType override below.
+
+      The manifest comment here claimed "@notifee/react-native itself declares
+      MANAGE_OWN_CALLS and FOREGROUND_SERVICE_PHONE_CALL, which satisfies the
+      Android 14 prerequisite". Checked against the merged release manifest:
+      neither is present. Notifee contributes SCHEDULE_EXACT_ALARM and
+      USE_FULL_SCREEN_INTENT, not the foreground-service pair. On Android 14+,
+      starting a foreground service with a type the app holds no matching
+      permission for throws SecurityException - which is why the ongoing-call
+      notification could fail to appear at all rather than merely look wrong.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL"/>
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!--
+      Full-screen intents are what turn a ringing notification into the ring
+      screen on a locked device. On Android 14+ the permission alone is not enough:
+      the user must also grant "Full screen notifications" special app access, or
+      Android silently downgrades the notification to a heads-up and the full
+      screen never appears. CallIntentModule exposes
+      canRingOverLockScreen() / requestRingOverLockScreen() for exactly that.
+    -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -47,6 +69,11 @@
         exactly what the previous target (MainActivity, which deliberately has no
         showWhenLocked/turnScreenOn) could not do.
 
+        `android:screenOrientation` is pinned to portrait. An FSI launched while
+        the device is mid-rotation used to land the ring screen in landscape, and
+        a call UI that reshuffles itself as the phone turns is part of why this
+        screen felt like a system dialog rather than like the app.
+
         exported="false": only this app may launch it (Notifee uses an explicit,
         same-UID intent). No LAUNCHER filter, so it cannot be started arbitrarily.
       -->
@@ -56,6 +83,7 @@
         android:launchMode="singleTop"
         android:showWhenLocked="true"
         android:turnScreenOn="true"
+        android:screenOrientation="portrait"
         android:excludeFromRecents="true"
         android:taskAffinity="com.rajofearth.synomilo.call"
         android:noHistory="true"
@@ -94,9 +122,10 @@
       <!--
         Notifee ships its foreground service as foregroundServiceType="shortService",
         which Android 14+ kills after 3 minutes - useless for a call. Override it to
-        phoneCall. MANAGE_OWN_CALLS and FOREGROUND_SERVICE_PHONE_CALL are declared by
-        @notifee/react-native itself, which satisfies the Android 14 prerequisite for
-        starting a phoneCall-typed foreground service.
+        phoneCall. FOREGROUND_SERVICE_PHONE_CALL and MANAGE_OWN_CALLS are declared at
+        the top of this file; they used to be assumed to arrive from
+        @notifee/react-native, which does not do that, and on Android 14+ starting
+        a phoneCall-typed foreground service without them throws SecurityException.
       -->
       <service
         android:name="app.notifee.core.ForegroundService"

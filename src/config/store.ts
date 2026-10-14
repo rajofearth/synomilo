@@ -2,6 +2,30 @@ import { create } from 'zustand';
 import config from './config.json';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+/**
+ * ---------------------------------------------------------------------------
+ * THIS STORE IS NOT A THEME SOURCE. DO NOT MAKE IT ONE.
+ * ---------------------------------------------------------------------------
+ *
+ * `config.json` ships `settings.style.theme: "system"` and a `brandColor`, and
+ * this store persists the whole config under `@app_config`. It is therefore the
+ * obvious-looking place to put a light/dark override, and it is the wrong place
+ * for one concrete reason: `initializeConfig()` below is ASYNC. It reads
+ * AsyncStorage after the first render, so anything derived from
+ * `useConfigStore` would resolve one tick (or one network round trip) after the
+ * app has already painted -- a flash of the wrong theme on every cold start --
+ * and, worse, a persisted value would win over the OS until the next cold start
+ * re-read it. That is precisely the "it only switches after I relaunch" symptom.
+ *
+ * The colour scheme is read from the device exactly once, in
+ * `src/theme/useAppTheme.ts`. If a user-facing light/dark override is ever
+ * wanted, it has to be applied there, synchronously, as an in-app value -- not
+ * hydrated out of storage underneath the theme.
+ *
+ * Nothing currently reads this store (`useConfig` has no call sites); it is
+ * kept because `src/config/config.json` is still part of the project.
+ */
+
 // TypeScript interfaces for the config structure
 interface ColorConfig {
   brandColor: string;

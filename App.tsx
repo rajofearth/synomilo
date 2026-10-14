@@ -1,14 +1,13 @@
 import './gesture-handler';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import {
-  View,
-  AppState,
-  NativeModules,
-  useColorScheme,
-} from 'react-native';
+import { View, AppState, NativeModules } from 'react-native';
 import { ConvexProvider, useMutation, useQuery } from 'convex/react';
 import { Button, Dialog, PaperProvider, Portal, Text, useTheme } from 'react-native-paper';
-import { buildPaperTheme } from './src/theme/dynamicTheme';
+import { useAppPaperTheme } from './src/theme/useAppTheme';
+import {
+  canRingOverLockScreen,
+  requestRingOverLockScreen,
+} from './src/notifications/lockScreenRinging';
 import UpdateChecker from './src/updater/UpdateChecker';
 
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -106,7 +105,7 @@ const AppInner = (): React.ReactElement => {
         callId: next.callId,
         type: next.type === 'video' ? 'video' : 'audio',
         role: next.role ?? 'callee',
-        peerName: next.peerName ?? 'Unknown',
+        peerName: next.peerName?.trim() || 'Incoming call',
       });
     },
     [],
@@ -374,10 +373,15 @@ const AppInner = (): React.ReactElement => {
             console.warn('[call] accept from notification failed', error);
           });
         }
-        await dismissCallNotification(data.callId);
         if (pressActionId === 'open-call') {
+          // The ring screen is taking over. It recovers the payload from the
+          // POSTED notification (Notifee only attaches the extras bundle when a
+          // `mainComponent` is set, which a bare full-screen intent does not
+          // provide), so cancelling here would make it refuse to draw - and the
+          // decline it posts would arrive with a null callId.
           return;
         }
+        await dismissCallNotification(data.callId);
         openCallScreen({
           callId: data.callId,
           type: data.callType,
@@ -481,6 +485,49 @@ const AppInner = (): React.ReactElement => {
     AsyncStorage.setItem('synomilo.batteryPrompted', 'true').catch(() => {});
   }, []);
 
+  /**
+   * Android 14+ makes `USE_FULL_SCREEN_INTENT` revocable special app access.
+   * Without the grant, a backgrounded incoming call silently degrades to an
+   * ordinary heads-up notification - which is exactly the "sometimes it just
+   * goes mute" behaviour. Ask once, then deep-link to the system setting.
+   */
+  const [fsiPromptVisible, setFsiPromptVisible] = useState(false);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const asked = await AsyncStorage.getItem('synomilo.fsiPrompted');
+        if (asked || cancelled) {
+          return;
+        }
+        if (await canRingOverLockScreen()) {
+          return;
+        }
+        if (!cancelled) {
+          setFsiPromptVisible(true);
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
+
+  const dismissFsiPrompt = useCallback(() => {
+    setFsiPromptVisible(false);
+    AsyncStorage.setItem('synomilo.fsiPrompted', 'true').catch(() => {});
+  }, []);
+
+  const allowFsi = useCallback(() => {
+    setFsiPromptVisible(false);
+    AsyncStorage.setItem('synomilo.fsiPrompted', 'true').catch(() => {});
+    requestRingOverLockScreen();
+  }, []);
+
   const allowBatteryOptimizations = useCallback(() => {
     setBatteryPromptVisible(false);
     NativeModules.Installer?.openBatterySettings?.();
@@ -524,6 +571,25 @@ const AppInner = (): React.ReactElement => {
               <Button onPress={allowBatteryOptimizations}>Allow</Button>
             </Dialog.Actions>
           </Dialog>
+          <Dialog
+            visible={fsiPromptVisible}
+            onDismiss={dismissFsiPrompt}
+            style={{ borderRadius: 28 }}
+          >
+            <Dialog.Title>Show calls over your lock screen</Dialog.Title>
+            <Dialog.Content>
+              <Text variant="bodyMedium">
+                Android only lets synomiló take over a locked screen if you allow
+                full screen notifications. Without it, a call arriving while the
+                app is closed only shows a quiet notification. This opens a
+                system setting.
+              </Text>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button onPress={dismissFsiPrompt}>Not now</Button>
+              <Button onPress={allowFsi}>Allow</Button>
+            </Dialog.Actions>
+          </Dialog>
         </Portal>
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -531,9 +597,23 @@ const AppInner = (): React.ReactElement => {
 };
 
 const App = (): React.ReactElement => {
-  const scheme: 'light' | 'dark' =
-    useColorScheme() === 'light' ? 'light' : 'dark';
-  const theme = useMemo(() => buildPaperTheme(scheme), [scheme]);
+  /**
+   * SINGLE SOURCE OF TRUTH FOR THE COLOUR SCHEME.
+   *
+   * `useAppPaperTheme()` is the ONE place the OS colour scheme enters this app.
+   * `useColorScheme()` is a subscription (React Native implements it with
+   * `useSyncExternalStore` over a native `appearanceChanged` event), so every
+   * caller holds its own snapshot and re-renders on its own schedule. This file
+   * previously had a second reader inside `RootStackNavigator`, so Paper
+   * repainted from one snapshot while the navigation container and status bar
+   * repainted from another - and the navigation theme was React Navigation's
+   * own blue/red defaults, which do not change with the scheme at all.
+   *
+   * `buildPaperTheme` returns a NEW object per call, which is what Paper needs:
+   * it re-renders on a changed `theme` prop identity, so a mutated-in-place
+   * theme would hold the previous scheme. See `src/theme/useAppTheme.ts`.
+   */
+  const theme = useAppPaperTheme();
 
   return (
     <ConvexProvider client={convex}>

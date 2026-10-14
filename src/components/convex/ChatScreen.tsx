@@ -76,6 +76,15 @@ type Message = {
   forwardedFrom: string | null;
   replyTo: ReplyPreview | null;
   fileUrl: string | null;
+  /**
+   * A still frame for a `video` row, when one exists.
+   *
+   * Optional on purpose: extracting a real frame needs a decoder the app does
+   * not ship, so nothing produces this today and every caller has to cope with
+   * its absence. When it IS populated it is a genuine image URL - never the
+   * clip's own storage URL, which would hand the whole mp4 to the image loader.
+   */
+  posterUrl?: string | null;
   createdAt: number;
   reactions: Array<{ emoji: string; count: number; mine: boolean }>;
 };
@@ -243,6 +252,84 @@ const formatBytes = (bytes: number | null): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+/**
+ * Below a megabyte the number is noise next to the name, and on a chat tile
+ * the caption is one line: the duration is the fact that matters and it is
+ * already a chip on the tile. Only start printing a size once it would change
+ * the reader's mind about whether to open the thing.
+ */
+const SIZE_WORTH_PRINTING = 1024 * 1024;
+
+/**
+ * `Screen Recording 2026-10-14 at 14.22.11.mp4` -> `Screen Rec…14.22.11.mp4`
+ *
+ * Head AND tail survive because the tail is where the extension and the time
+ * live; a plain tail ellipsis on a 40-character name throws both away and
+ * leaves `Screen Recording 2026…`, which identifies nothing.
+ */
+const truncateMiddle = (value: string, limit = 26): string => {
+  if (value.length <= limit) {
+    return value;
+  }
+  const budget = limit - 1; // the ellipsis
+  const head = Math.ceil(budget * 0.55);
+  return `${value.slice(0, head)}…${value.slice(value.length - (budget - head))}`;
+};
+
+/** The one caption line under a media tile. Empty is a valid answer. */
+const mediaCaption = (label: string | null, size: number | null): string => {
+  const name = (label ?? '').trim();
+  const weight =
+    size != null && size >= SIZE_WORTH_PRINTING ? formatBytes(size) : '';
+  return [truncateMiddle(name), weight].filter(Boolean).join('  ·  ');
+};
+
+/** Mirrors `styles.messageRow.maxWidth`; the hard ceiling for any tile. */
+const MESSAGE_ROW_MAX = 0.82;
+/** Mirrors `styles.listContent.paddingHorizontal`. */
+const LIST_PADDING = 12;
+/**
+ * Mirrors `styles.bubble.paddingHorizontal`, plus the 2pt highlight border the
+ * bubble grows on a tap, because a fixed-width tile does not shrink and would
+ * otherwise poke out of a capped row.
+ */
+const BUBBLE_PADDING = 12;
+
+/**
+ * 16:9 is the shape every phone shoots and every reference app previews in, so
+ * a clip that arrives with no poster still reads as a frame of something rather
+ * than as a box that failed to load. 4:3 for a photo is the same argument: a
+ * crop that is not square and not a sliver survives most portraits without
+ * pushing the reader's half of the screen off it.
+ */
+const MEDIA_ASPECT = {
+  video: 16 / 9,
+  image: 4 / 3,
+} as const;
+
+/** Equal to `styles.bubble.borderRadius`, so a tile nests instead of clashing. */
+const MEDIA_RADIUS = 14;
+
+/**
+ * The width of every attachment tile: one number, so a photo, a clip and a
+ * file all begin and end on the same vertical line in the thread.
+ *
+ * 264 is the ceiling - the widest a 16:9 cell can get before it stops reading
+ * as a poster and starts being a wall - and the bubble geometry above is the
+ * real limit on a narrow device. 180 is the floor: below it the 56pt play
+ * affordance and the duration chip stop fitting without overlapping.
+ */
+const mediaCellWidth = (screenWidth: number): number =>
+  Math.min(
+    264,
+    Math.max(
+      180,
+      Math.round((screenWidth - LIST_PADDING * 2) * MESSAGE_ROW_MAX) -
+        BUBBLE_PADDING * 2 -
+        4,
+    ),
+  );
+
 /** Everything a bubble needs from the Paper palette, in one flat bag. */
 type UiTokens = {
   primary: string;
@@ -262,6 +349,12 @@ type UiTokens = {
   onErrorContainer: string;
   elevation2: string;
   elevation3: string;
+  /**
+   * The pair that inverts together, so a badge drawn on it stays legible in
+   * whichever scheme is active. Paper has no single "always dark" token.
+   */
+  inverseSurface: string;
+  inverseOnSurface: string;
   backdrop: string;
   shadow: string;
 };
@@ -360,7 +453,87 @@ const SendFailureOverlay = ({ ui }: { ui: UiTokens }) => (
 );
 
 /**
- * A video message cell: a designed placeholder plus a play affordance.
+ * The shell every attachment shares: the width, the aspect, the radius, the
+ * surface, and the three states a tile can be in.
+ *
+ * Pressed is drawn from `Pressable`'s own style callback rather than from a
+ * `useState` flag: the platform already computes it, so a row that is only
+ * being touched never re-renders, and the flash on a long list stays free.
+ *
+ * `aspectRatio` rather than a hard-coded height, so the tile keeps its shape
+ * when `mediaCellWidth` clamps it on a narrow device.
+ */
+const MediaTile = ({
+  width,
+  aspect,
+  ui,
+  onPress,
+  disabled,
+  dimmed,
+  accessibilityLabel,
+  children,
+}: {
+  width: number;
+  /** Omitted for a content-height tile (a file row), set for a framed one. */
+  aspect?: number;
+  ui: UiTokens;
+  onPress?: () => void;
+  disabled?: boolean;
+  /**
+   * Fades the tile because there is nothing to open - an expired URL, a send
+   * that failed. Deliberately NOT the same thing as `disabled`: an upload in
+   * flight already carries a scrim and a percentage, and fading the bytes on top
+   * of that is what made an optimistic photo vanish while it went up.
+   */
+  dimmed?: boolean;
+  accessibilityLabel: string;
+  children: React.ReactNode;
+}) => (
+  <Pressable
+    onPress={onPress}
+    disabled={disabled || !onPress}
+    accessibilityRole="button"
+    accessibilityLabel={accessibilityLabel}
+    accessibilityState={{ disabled: !!disabled || !onPress }}
+    style={({ pressed }) => [
+      styles.mediaTile,
+      aspect ? { aspectRatio: aspect } : null,
+      {
+        width,
+        borderRadius: MEDIA_RADIUS,
+        backgroundColor: ui.surface,
+        // Pressing pushes the tile's own surface down a step and lights its
+        // edge; both are surface steps, so it works in either scheme.
+        borderColor: pressed ? ui.primary : ui.outlineVariant,
+        opacity: dimmed ? 0.55 : 1,
+      },
+    ]}
+  >
+    {children}
+  </Pressable>
+);
+
+/** The caption line under a tile. Truncated, muted, and never a second row. */
+const MediaCaption = ({
+  caption,
+  color,
+  width,
+}: {
+  caption: string;
+  color: string;
+  width: number;
+}) =>
+  caption ? (
+    <Text
+      numberOfLines={1}
+      style={[styles.mediaCaption, { width, color }]}
+    >
+      {caption}
+    </Text>
+  ) : null;
+
+/**
+ * A video message cell: a designed 16:9 poster plus a play affordance.
  * Deliberately contains NO player, and deliberately does NOT point `<Image>`
  * at the asset.
  *
@@ -368,86 +541,258 @@ const SendFailureOverlay = ({ ui }: { ui: UiTokens }) => (
  * case it decoded". On Android that hands the whole clip to Fresco/Glide, which
  * fetches every byte of it before failing to decode it as a picture - a real
  * full download triggered by simply scrolling the list. Nothing here renders an
- * image for a `video` kind now.
+ * image for a `video` kind unless a real `posterUrl` is supplied, which is a
+ * frame extractor writing a still of its own and never the clip.
  *
  * The cell also mounts no decoder: a paused `<Video>` per row meant one
  * ExoPlayer per visible message and native views swallowing taps. Playback
  * happens in the viewer, which mounts exactly one player for the whole screen.
+ *
+ * With no poster available the tile is composed rather than blank: a hairline
+ * keyline standing in for the frame, a play disc sized for the cell, and the
+ * duration on the corner. That reads as media; an empty box reads as failure.
  */
 const VideoAttachmentCell = ({
   fileName,
   size,
   durationSeconds,
+  posterUrl,
   uploading,
+  failed,
   progress,
   ui,
+  width,
+  captionColor,
+  canOpen,
   onPress,
 }: {
   fileName: string | null;
   size: number | null;
   durationSeconds: number | null;
+  posterUrl: string | null;
   uploading: boolean;
+  failed: boolean;
   progress: number | null;
   ui: UiTokens;
+  width: number;
+  /** Muted bubble colour, so the caption reads against its own bubble. */
+  captionColor: string;
+  canOpen: boolean;
   onPress?: () => void;
 }) => {
-  const caption = [fileName, formatBytes(size) || null]
-    .filter(Boolean)
-    .join('  ·  ');
   const duration = formatDuration(durationSeconds);
+  const caption = mediaCaption(fileName, size);
 
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      style={[styles.videoCard, { backgroundColor: ui.surfaceVariant }]}
-      accessibilityRole="button"
-      accessibilityLabel={`Play video${fileName ? `, ${fileName}` : ''}`}
-    >
-      <View
-        style={[
-          styles.videoPosterFallback,
-          { backgroundColor: ui.surfaceVariant },
-        ]}
-        pointerEvents="none"
+    <>
+      <MediaTile
+        width={width}
+        aspect={MEDIA_ASPECT.video}
+        ui={ui}
+        onPress={onPress}
+        disabled={uploading || !canOpen}
+        dimmed={!canOpen && !uploading && !failed}
+        accessibilityLabel={`Play video${fileName ? `, ${fileName}` : ''}`}
       >
-        <MaterialDesignIcons name="movie" size={36} color={ui.onSurfaceVariant} />
-        <Text
-          style={[styles.videoFallbackText, { color: ui.onSurfaceVariant }]}
-        >
-          Video
-        </Text>
-      </View>
-      <View style={styles.videoPlayOverlay} pointerEvents="none">
-        <View
-          style={[styles.videoPlayButton, { backgroundColor: ui.primary }]}
-        >
-          <MaterialDesignIcons name="play" size={26} color={ui.onPrimary} />
+        {posterUrl ? (
+          <Image
+            source={{ uri: posterUrl }}
+            style={styles.mediaPosterImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View
+            style={[styles.mediaKeyline, { borderColor: ui.outlineVariant }]}
+            pointerEvents="none"
+          />
+        )}
+        <View style={styles.mediaCentre} pointerEvents="none">
+          {canOpen ? (
+            <View
+              style={[
+                styles.mediaPlay,
+                { backgroundColor: ui.primary },
+              ]}
+            >
+              <MaterialDesignIcons
+                name="play"
+                size={28}
+                color={ui.onPrimary}
+              />
+            </View>
+          ) : (
+            <MaterialDesignIcons
+              name="alert-circle-outline"
+              size={28}
+              color={ui.onSurfaceVariant}
+            />
+          )}
         </View>
-      </View>
-      <View style={styles.videoChipStack} pointerEvents="none">
         {!!duration && (
-          <View style={[styles.videoChip, styles.videoChipFixed, { backgroundColor: ui.surface }]}>
-            <Text style={[styles.videoChipText, { color: ui.onSurface }]}>
+          <View
+            style={[
+              styles.mediaChip,
+              { backgroundColor: ui.inverseSurface },
+            ]}
+            pointerEvents="none"
+          >
+            <MaterialDesignIcons
+              name="movie"
+              size={12}
+              color={ui.inverseOnSurface}
+            />
+            <Text
+              style={[styles.mediaChipText, { color: ui.inverseOnSurface }]}
+            >
               {duration}
             </Text>
           </View>
         )}
-        {!!caption && (
-          <View style={[styles.videoChip, { backgroundColor: ui.surface }]}>
-            <Text
-              numberOfLines={1}
-              style={[styles.videoChipText, { color: ui.onSurface }]}
-            >
-              {caption}
-            </Text>
-          </View>
-        )}
-      </View>
-      {uploading && <SendProgressOverlay progress={progress} ui={ui} />}
-    </Pressable>
+        {uploading && <SendProgressOverlay progress={progress} ui={ui} />}
+        {failed && <SendFailureOverlay ui={ui} />}
+      </MediaTile>
+      <MediaCaption
+        caption={caption}
+        color={captionColor}
+        width={width}
+      />
+    </>
   );
 };
+
+/**
+ * A picture. Same tile as a clip, same press/disabled/failed states, so the two
+ * kinds cannot drift apart again. The local branch renders the bytes already
+ * on this device, which is why an optimistic photo is never a grey rectangle.
+ */
+const ImageAttachmentCell = ({
+  uri,
+  uploading,
+  failed,
+  progress,
+  ui,
+  width,
+  canOpen,
+  onPress,
+}: {
+  uri: string;
+  uploading: boolean;
+  failed: boolean;
+  progress: number | null;
+  ui: UiTokens;
+  width: number;
+  canOpen: boolean;
+  onPress?: () => void;
+}) => (
+  <MediaTile
+    width={width}
+    aspect={MEDIA_ASPECT.image}
+    ui={ui}
+    onPress={onPress}
+    disabled={uploading || !canOpen}
+    accessibilityLabel="Open photo"
+  >
+    <Image
+      source={{ uri }}
+      style={styles.mediaPosterImage}
+      resizeMode="cover"
+    />
+    {uploading && <SendProgressOverlay progress={progress} ui={ui} />}
+    {failed && <SendFailureOverlay ui={ui} />}
+  </MediaTile>
+);
+
+/**
+ * A document, an audio note, or anything else that is not playable as a
+ * picture. It gets the tile too: the icon moves into a plate that matches the
+ * poster's geometry, so a file in a thread is not visibly a different species
+ * of object from the photo next to it.
+ */
+const FileAttachmentCell = ({
+  kind,
+  fileName,
+  size,
+  uploading,
+  failed,
+  ui,
+  width,
+  canOpen,
+  onPress,
+}: {
+  kind: Message['kind'];
+  fileName: string | null;
+  size: number | null;
+  uploading: boolean;
+  failed: boolean;
+  ui: UiTokens;
+  width: number;
+  canOpen: boolean;
+  onPress?: () => void;
+}) => (
+  <MediaTile
+    width={width}
+    ui={ui}
+    onPress={onPress}
+    disabled={uploading || !canOpen}
+    dimmed={failed}
+    accessibilityLabel={`Open ${attachmentLabel(kind)}${
+      fileName ? `, ${fileName}` : ''
+    }`}
+  >
+    <View style={styles.mediaFileRow}>
+      <View
+        style={[
+          styles.mediaIconPlate,
+          {
+            backgroundColor: failed ? ui.errorContainer : ui.surfaceVariant,
+          },
+        ]}
+      >
+        <MaterialDesignIcons
+          name={
+            failed
+              ? 'alert-circle-outline'
+              : kind === 'audio'
+                ? 'play-circle'
+                : kind === 'video'
+                  ? 'file-video-outline'
+                  : 'file-document-outline'
+          }
+          size={22}
+          color={failed ? ui.onErrorContainer : ui.onSurfaceVariant}
+        />
+      </View>
+      <View style={styles.mediaFileText}>
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.mediaFileName,
+            { color: failed ? ui.onErrorContainer : ui.onSurface },
+          ]}
+        >
+          {fileName ?? attachmentLabel(kind)}
+        </Text>
+        {(failed || uploading || mediaCaption(null, size)) && (
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.mediaFileMeta,
+              {
+                color: failed
+                  ? ui.onErrorContainer
+                  : ui.onSurfaceVariant,
+              },
+            ]}
+          >
+            {failed
+              ? 'Not sent'
+              : mediaCaption(null, size) || 'Uploading'}
+          </Text>
+        )}
+      </View>
+    </View>
+  </MediaTile>
+);
 
 /** Distance past which a release counts as "reply", and how far it slides. */
 const SWIPE_TRIGGER = 56;
@@ -595,17 +940,31 @@ const SwipeReply = ({
 };
 
 /**
- * The viewer's transport bar. Built here rather than using the player's own
- * controls because the native set differs per platform (iOS has no fullscreen
- * affordance at all), while this one is identical everywhere and draws only
- * from the Paper palette.
+ * The viewer's transport bar: a full-width band pinned to the bottom edge of
+ * the viewer, with the scrubber above and the controls below it.
+ *
+ * It is a BAR, not a pill, and that is the whole point. The old version floated
+ * a rounded rectangle inset 20pt from both edges and 20pt off the bottom, which
+ * reads as a widget from somewhere else dropped on top of the video: it had its
+ * own shadow, its own corners and its own relationship to nothing. Anchored to
+ * the edges, on an app surface, under a hairline, it is part of the screen.
+ *
+ * Built here rather than using the player's own controls because the native set
+ * differs per platform (iOS has no fullscreen affordance at all), while this one
+ * is identical everywhere and draws only from the Paper palette.
+ *
+ * Geometry: 16pt of side padding, a 4pt track, a 12pt thumb that overhangs it
+ * by 4 so it stays visible against a black frame, and a 48pt control row. The
+ * times and the fullscreen button are absolutely positioned at the edges and
+ * the play disc is centred by the row itself, so it stays on the real centre
+ * line whatever the labels happen to measure.
  */
 const ViewerControls = ({
   paused,
   current,
   duration,
   fullscreen,
-  media,
+  ui,
   onToggle,
   onToggleFullscreen,
 }: {
@@ -613,58 +972,72 @@ const ViewerControls = ({
   current: number;
   duration: number;
   fullscreen: boolean;
-  media: MediaTokens;
+  ui: UiTokens;
   onToggle: () => void;
   onToggleFullscreen: () => void;
 }) => {
   const ratio = duration > 0 ? Math.min(1, Math.max(0, current / duration)) : 0;
   return (
-    <View style={[styles.viewerControls, { backgroundColor: media.pill }]}>
-      <Pressable
-        onPress={onToggle}
-        style={[styles.viewerControlButton, { backgroundColor: media.onPill }]}
-        hitSlop={6}
-        accessibilityRole="button"
-        accessibilityLabel={paused ? 'Play' : 'Pause'}
-      >
-        <MaterialDesignIcons
-          name={paused ? 'play' : 'pause'}
-          size={22}
-          color={media.pill}
-        />
-      </Pressable>
-      <Text style={[styles.viewerControlTime, { color: media.onPill }]}>
-        {formatDuration(current) || '0:00'}
-      </Text>
+    <View style={styles.viewerBar}>
       <View
-        style={[styles.viewerControlTrack, { backgroundColor: media.onPill }]}
+        style={[styles.viewerBarTrack, { backgroundColor: ui.outlineVariant }]}
       >
         <View
           style={[
-            styles.viewerControlFill,
+            styles.viewerBarFill,
             {
-              backgroundColor: media.pill,
+              backgroundColor: ui.onSurface,
               width: `${Math.round(ratio * 100)}%`,
             },
           ]}
-        />
+        >
+          {/* A zero-length fill would park the thumb half off the left edge. */}
+          {ratio > 0 && (
+            <View
+              style={[
+                styles.viewerBarThumb,
+                { backgroundColor: ui.onSurface },
+              ]}
+            />
+          )}
+        </View>
       </View>
-      <Text style={[styles.viewerControlTime, { color: media.onPill }]}>
-        {formatDuration(duration)}
-      </Text>
-      <Pressable
-        onPress={onToggleFullscreen}
-        style={styles.viewerControlIcon}
-        hitSlop={6}
-        accessibilityRole="button"
-        accessibilityLabel={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-      >
-        <MaterialDesignIcons
-          name={fullscreen ? 'fullscreen-exit' : 'fullscreen'}
-          size={22}
-          color={media.onPill}
-        />
-      </Pressable>
+      <View style={styles.viewerBarRow}>
+        <Text
+          style={[styles.viewerBarTime, styles.viewerBarTimeLeft, { color: ui.onSurfaceVariant }]}
+        >
+          {formatDuration(current) || '0:00'}
+        </Text>
+        <Pressable
+          onPress={onToggle}
+          style={[styles.viewerBarPlay, { backgroundColor: ui.primary }]}
+          accessibilityRole="button"
+          accessibilityLabel={paused ? 'Play' : 'Pause'}
+        >
+          <MaterialDesignIcons
+            name={paused ? 'play' : 'pause'}
+            size={24}
+            color={ui.onPrimary}
+          />
+        </Pressable>
+        <Text
+          style={[styles.viewerBarTime, styles.viewerBarTimeRight, { color: ui.onSurfaceVariant }]}
+        >
+          {formatDuration(duration) || '0:00'}
+        </Text>
+        <Pressable
+          onPress={onToggleFullscreen}
+          style={styles.viewerBarFullscreen}
+          accessibilityRole="button"
+          accessibilityLabel={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        >
+          <MaterialDesignIcons
+            name={fullscreen ? 'fullscreen-exit' : 'fullscreen'}
+            size={22}
+            color={ui.onSurface}
+          />
+        </Pressable>
+      </View>
     </View>
   );
 };
@@ -908,6 +1281,8 @@ const ChatScreen = ({ route, navigation }: any) => {
       onErrorContainer: c.onErrorContainer,
       elevation2: c.elevation.level2,
       elevation3: c.elevation.level3,
+      inverseSurface: c.inverseSurface,
+      inverseOnSurface: c.inverseOnSurface,
       backdrop: c.backdrop,
       shadow: c.shadow,
     };
@@ -1687,13 +2062,46 @@ const ChatScreen = ({ route, navigation }: any) => {
     navigation.navigate('ForwardMessage', { message });
   }, [viewer, navigation]);
 
+  /**
+   * The one width every attachment in this thread is laid out at, so a photo,
+   * a clip and a file all begin and end on the same vertical line. Derived from
+   * the bubble geometry rather than hard-coded, because a fixed width that
+   * exceeds the row cap would push the bubble past `messageRow` instead of
+   * being clamped by it.
+   */
+  const mediaWidth = useMemo(() => mediaCellWidth(screenWidth), [screenWidth]);
+
+  /**
+   * Ids of messages that start a new calendar day, computed once per list change.
+   *
+   * `renderItem` used to read `messages[index + 1]` directly, which forced
+   * `messages` into its dependency array. `renderItem` IS the FlatList prop, so
+   * a new identity re-rendered every visible bubble on every single message -
+   * a full-list re-render per incoming message. Deriving this set here keeps the
+   * only thing `renderItem` actually needed, and the set is a far smaller value.
+   *
+   * `messages` is newest-first, so a day boundary is simply where the day key
+   * changes between consecutive rows - equivalent to the old
+   * `!older || !dayjs(older.createdAt).isSame(item.createdAt, 'day')` check.
+   */
+  const dayBoundaryIds = useMemo(() => {
+    const ids = new Set<string>();
+    let previousDay = '';
+    for (let i = 0; i < messages.length; i += 1) {
+      const day = dayjs(messages[i].createdAt).format('YYYY-MM-DD');
+      if (day !== previousDay) {
+        ids.add(messages[i]._id);
+        previousDay = day;
+      }
+    }
+    return ids;
+  }, [messages]);
+
   const renderMessage = useCallback(
     ({ item, index }: { item: Message; index: number }) => {
       const mine = item.senderId === user?._id;
       const isGroup = conversation?.type === 'group';
-      const older = messages[index + 1];
-      const showDay =
-        !older || !dayjs(older.createdAt).isSame(item.createdAt, 'day');
+      const showDay = dayBoundaryIds.has(item._id);
       const deleted = !!item.deletedAt;
       const isHighlighted = highlightId === item._id;
       /**
@@ -1847,69 +2255,57 @@ const ChatScreen = ({ route, navigation }: any) => {
                 </Pressable>
               )}
               {item.kind === 'image' && local?.localUri ? (
-                // The bytes are still on this device: show them, dimmed, with
-                // the transfer progress on top. Never a blank grey box.
-                <View style={styles.imageFrame}>
-                  <Image
-                    source={{ uri: local.localUri }}
-                    style={styles.imageAttachment}
-                    resizeMode="cover"
-                  />
-                  {inFlight && (
-                    <SendProgressOverlay progress={local.progress} ui={ui} />
-                  )}
-                  {failed && <SendFailureOverlay ui={ui} />}
-                </View>
+                // The bytes are still on this device: show them with the
+                // transfer progress on top. Never a blank grey box, and never
+                // faded underneath the scrim as well - the bytes are the point
+                // of an optimistic send.
+                <ImageAttachmentCell
+                  uri={local.localUri}
+                  uploading={inFlight}
+                  failed={failed}
+                  progress={local.progress ?? null}
+                  ui={ui}
+                  width={mediaWidth}
+                  canOpen={false}
+                />
               ) : isImage && item.fileUrl ? (
-                <Pressable
+                <ImageAttachmentCell
+                  uri={item.fileUrl}
+                  uploading={false}
+                  failed={false}
+                  progress={null}
+                  ui={ui}
+                  width={mediaWidth}
+                  canOpen={!!openMedia}
                   onPress={openMedia}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open photo"
-                >
-                  <Image
-                    source={{ uri: item.fileUrl }}
-                    style={styles.imageAttachment}
-                    resizeMode="cover"
-                  />
-                </Pressable>
+                />
               ) : isVideo ? (
                 <VideoAttachmentCell
                   fileName={item.fileName}
                   size={item.size}
                   durationSeconds={local?.durationSeconds ?? null}
+                  posterUrl={item.posterUrl ?? null}
                   uploading={inFlight}
+                  failed={failed}
                   progress={local?.progress ?? null}
                   ui={ui}
+                  width={mediaWidth}
+                  captionColor={bubbleMuted}
+                  canOpen={!!openMedia}
                   onPress={openMedia}
                 />
               ) : item.kind !== 'text' ? (
-                <Pressable onPress={openMedia} style={styles.fileRow}>
-                  <MaterialDesignIcons
-                    name={
-                      item.kind === 'audio'
-                        ? 'play-circle'
-                        : item.kind === 'video'
-                          ? 'file-video-outline'
-                          : 'file-document-outline'
-                    }
-                    size={item.kind === 'audio' ? 28 : 26}
-                    color={bubbleText}
-                    style={styles.fileIcon}
-                  />
-                  <View style={styles.fileMeta}>
-                    <Text
-                      numberOfLines={1}
-                      style={[type.body, { color: bubbleText }]}
-                    >
-                      {item.fileName ?? 'Attachment'}
-                    </Text>
-                    {!!formatBytes(item.size) && (
-                      <Text style={[type.caption, { color: bubbleMuted }]}>
-                        {formatBytes(item.size)}
-                      </Text>
-                    )}
-                  </View>
-                </Pressable>
+                <FileAttachmentCell
+                  kind={item.kind}
+                  fileName={item.fileName}
+                  size={item.size}
+                  uploading={inFlight}
+                  failed={failed}
+                  ui={ui}
+                  width={mediaWidth}
+                  canOpen={!!openMedia}
+                  onPress={openMedia}
+                />
               ) : null}
               {/* A picture and a video carry their progress on the media
                   itself; text, files and voice notes get the thin bar here. */}
@@ -2082,9 +2478,10 @@ const ChatScreen = ({ route, navigation }: any) => {
       conversation?.type,
       type,
       ui,
+      mediaWidth,
       applyReaction,
       openViewer,
-      messages,
+      dayBoundaryIds,
       highlightId,
       scrollToMessage,
       tickFor,
@@ -2804,14 +3201,18 @@ const ChatScreen = ({ route, navigation }: any) => {
                   </Text>
                 </View>
               )}
-              {/* Play/pause, scrubber and fullscreen for the one player. */}
+              {/* Play/pause, scrubber and fullscreen for the one player.
+                  Full width, edge to edge, in both windowed and fullscreen:
+                  a control that only belongs to the picture in one of the two
+                  states is a control the reader has to find twice. */}
               {viewerMediaKind && viewerMedia.status !== 'error' && (
                 <View
                   style={[
-                    styles.viewerControlsWrap,
+                    styles.viewerBarWrap,
                     {
-                      bottom: viewerFullscreen ? insets.bottom + 12 : 20,
-                      shadowColor: ui.shadow,
+                      backgroundColor: ui.elevation3,
+                      borderTopColor: ui.outlineVariant,
+                      paddingBottom: 12 + insets.bottom,
                     },
                   ]}
                 >
@@ -2820,7 +3221,7 @@ const ChatScreen = ({ route, navigation }: any) => {
                     current={viewerPlayback.current}
                     duration={viewerPlayback.duration}
                     fullscreen={viewerFullscreen}
-                    media={media}
+                    ui={ui}
                     onToggle={() =>
                       setViewerPlayback(prev => ({ ...prev, paused: !prev.paused }))
                     }
@@ -3218,9 +3619,6 @@ const styles = StyleSheet.create({
     padding: 2,
     marginLeft: 4,
   },
-  imageFrame: {
-    alignSelf: 'flex-start',
-  },
   sendScrim: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -3277,72 +3675,92 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  imageAttachment: {
-    width: 220,
-    height: 220,
-    borderRadius: 10,
-    marginBottom: 4,
-  },
-  videoCard: {
-    width: 220,
-    height: 165,
-    borderRadius: 14,
+  /**
+   * The chrome every attachment shares. `overflow: hidden` is what turns a
+   * rounded tile into a frame: the poster image, the keyline and the badges all
+   * live inside it and get clipped by the same radius the border is drawn on.
+   */
+  mediaTile: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
     overflow: 'hidden',
-    marginBottom: 4,
   },
-  videoPosterFallback: {
+  mediaPosterImage: {
     ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  videoFallbackText: {
-    fontSize: 12,
-    marginTop: 4,
-  },
-  videoPlayOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  videoPlayButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  videoChipStack: {
+  /**
+   * The stand-in for a frame nobody has extracted. A hairline box inset inside
+   * the tile says "this is a picture that is not here yet" in a way a flat fill
+   * never does - the empty square in the old cell was the complaint, and a flat
+   * fill is exactly what produced it.
+   */
+  mediaKeyline: {
     position: 'absolute',
-    left: 8,
+    left: 10,
+    top: 10,
+    right: 10,
+    bottom: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  mediaCentre: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // 56 is sized for the cell, not for a generic tap target: at 264 wide the
+  // disc reads as the centre of a frame, where 52 in a 220 box read as a glyph
+  // floating in a void.
+  mediaPlay: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Bottom-right, the way every reference app puts it, so the eye lands in the
+  // same place on every tile in the thread.
+  mediaChip: {
+    position: 'absolute',
     right: 8,
     bottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-  },
-  videoChip: {
-    flexShrink: 1,
     borderRadius: 8,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 3,
   },
-  // A duration is short and must never be squeezed out by a long filename.
-  videoChipFixed: {
-    flexShrink: 0,
-  },
-  videoChipText: {
+  mediaChipText: {
     fontSize: 11,
+    marginLeft: 4,
   },
-  fileRow: {
+  mediaCaption: {
+    marginTop: 6,
+  },
+  mediaFileRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    maxWidth: 240,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  fileIcon: {
-    marginRight: 8,
+  mediaIconPlate: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
   },
-  fileMeta: {
+  mediaFileText: {
     flex: 1,
+    marginRight: 4,
+  },
+  mediaFileName: {
+    fontSize: 14,
+  },
+  mediaFileMeta: {
+    fontSize: 12,
+    marginTop: 2,
   },
   reactionRow: {
     flexDirection: 'row',
@@ -3533,48 +3951,85 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
   },
-  viewerControlsWrap: {
+  /**
+   * The transport band. Flush to all three edges it can reach, no radius and no
+   * shadow: a shadow only reads on the two free edges, and a raised pill on a
+   * black frame is the "system widget dropped on top" look this replaces. The
+   * hairline is the only separator, and it is the same `outlineVariant` the
+   * header uses, so the viewer agrees with the rest of the app.
+   */
+  viewerBarWrap: {
     position: 'absolute',
-    left: 20,
-    right: 20,
-    borderRadius: 26,
-    elevation: 6,
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 10,
   },
-  viewerControls: {
-    flexDirection: 'row',
+  viewerBar: {
+    width: '100%',
+  },
+  viewerBarTrack: {
+    height: 4,
+    borderRadius: 2,
+    justifyContent: 'center',
+  },
+  viewerBarFill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  // Overhangs the track by 4 on each side so it stays a visible dot against a
+  // black frame instead of dissolving into the 4pt line it sits on.
+  viewerBarThumb: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  viewerBarRow: {
+    height: 48,
     alignItems: 'center',
-    borderRadius: 26,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    justifyContent: 'center',
+    marginTop: 4,
   },
-  viewerControlButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  viewerBarPlay: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  viewerControlTime: {
-    fontSize: 11,
-    marginHorizontal: 8,
-    minWidth: 38,
-    textAlign: 'center',
+  // Positioned rather than laid out, so the play disc sits on the real centre
+  // line whatever the two time labels measure. `top` is pinned too: a static
+  // position resolves differently on the two platforms once a child is
+  // absolutely positioned inside an auto-sized row.
+  viewerBarTime: {
+    position: 'absolute',
+    top: 17,
+    fontSize: 12,
   },
-  viewerControlTrack: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
+  viewerBarTimeLeft: {
+    left: 0,
+    textAlign: 'left',
   },
-  viewerControlFill: {
-    height: 4,
-    borderRadius: 2,
+  // Sits inboard of the fullscreen button's 44pt target, which occupies the
+  // last 44pt of the bar.
+  viewerBarTimeRight: {
+    right: 56,
+    textAlign: 'right',
   },
-  viewerControlIcon: {
-    padding: 8,
+  viewerBarFullscreen: {
+    position: 'absolute',
+    top: 2,
+    right: 0,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   viewerSpinnerBadge: {
     width: 64,

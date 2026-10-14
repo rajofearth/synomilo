@@ -365,11 +365,21 @@ const ChatInfoScreen = ({ route, navigation }: any) => {
         <View style={styles.photoGrid}>
           {visible.map(photo => (
             <TouchableOpacity key={photo._id} activeOpacity={0.8} onPress={() => openUrl(photo.fileUrl)}>
-              <Image source={{ uri: photo.fileUrl as string }} style={[styles.photo, { width: THUMB_SIZE, height: THUMB_SIZE }]} />
-              {photo.kind === 'video' && (
-                <View style={styles.playOverlay} pointerEvents="none">
-                  <MaterialDesignIcons name="play-circle" size={36} color={colors.inverseOnSurface} />
+              {photo.kind === 'video' ? (
+                // Never an `<Image>` at the clip's own URL: the image loader
+                // would fetch every byte of the mp4 before failing to decode it,
+                // so merely opening this tab downloaded whole videos. A composed
+                // tile costs one View and reads as media on purpose.
+                <View style={[styles.photo, styles.videoThumb, { width: THUMB_SIZE, height: THUMB_SIZE, backgroundColor: colors.surfaceVariant }]}>
+                  <View style={[styles.videoThumbKeyline, { borderColor: colors.outlineVariant }]} pointerEvents="none" />
+                  <View style={styles.playOverlay} pointerEvents="none">
+                    <View style={[styles.playDisc, { backgroundColor: colors.primary }]}>
+                      <MaterialDesignIcons name="play" size={20} color={colors.onPrimary} />
+                    </View>
+                  </View>
                 </View>
+              ) : (
+                <Image source={{ uri: photo.fileUrl as string }} style={[styles.photo, { width: THUMB_SIZE, height: THUMB_SIZE }]} />
               )}
             </TouchableOpacity>
           ))}
@@ -795,7 +805,10 @@ const styles = StyleSheet.create({
   emptyWrap: { alignItems: 'center', paddingVertical: 48 },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 4 },
   photo: { margin: 4, borderRadius: 12 },
-  playOverlay: { ...StyleSheet.absoluteFillObject, margin: 4, alignItems: 'center', justifyContent: 'center' },
+  videoThumb: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  videoThumbKeyline: { ...StyleSheet.absoluteFillObject, margin: 8, borderWidth: 1, borderRadius: 6 },
+  playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playDisc: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   row: { paddingVertical: 4 },
   rowIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   rowAvatar: { justifyContent: 'center', marginLeft: 4, marginRight: 4 },

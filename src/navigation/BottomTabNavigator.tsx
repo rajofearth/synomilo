@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Animated,
   StyleSheet,
@@ -10,6 +10,7 @@ import {
   createBottomTabNavigator,
   BottomTabBarButtonProps,
 } from '@react-navigation/bottom-tabs';
+import type { BottomTabNavigationOptions } from '@react-navigation/bottom-tabs';
 import { useTheme as usePaperTheme } from 'react-native-paper';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { useIsKeyboardVisible } from '../hooks/useIsKeyboardVisible';
@@ -114,47 +115,74 @@ const TABS: {
 ];
 
 const BottomTabNavigator = () => {
+  /**
+   * Colours come from Paper's context, which `App.tsx` feeds with the one theme
+   * object built in `src/theme/dynamicTheme.ts`. This tab bar deliberately does
+   * NOT call `useColorScheme()`: a second reader of the OS scheme is a second
+   * snapshot, and the tab bar is the one surface that must not lag a frame
+   * behind the screen above it when the device flips. See `src/theme/useAppTheme.ts`.
+   */
   const paper = usePaperTheme();
   const isKeyboardVisible = useIsKeyboardVisible();
+
+  /**
+   * Memoised on the theme so a scheme flip rebuilds the tab bar exactly once,
+   * and an unrelated parent re-render (a Convex query resolving, a keystroke in
+   * the composer) does not rebuild it at all. Before this, `screenOptions`
+   * returned a fresh object on every render, so React Navigation saw a new
+   * `tabBarLabel` component function each time and remounted every label.
+   */
+  const screenOptions = useCallback(
+    ({
+      route,
+    }: {
+      route: { name: keyof BottomTabParamList };
+    }): BottomTabNavigationOptions => ({
+      headerShown: false,
+      tabBarStyle: isKeyboardVisible
+        ? { display: 'none' as const }
+        : [
+            styles.tabBar,
+            {
+              backgroundColor: paper.colors.elevation.level2,
+              borderTopColor: paper.colors.outlineVariant,
+            },
+          ],
+      animation: 'none',
+      tabBarIcon: ({ focused }: { focused: boolean }) => (
+        <TabIcon focused={focused} name={icons[route.name]} />
+      ),
+      tabBarShowLabel: true,
+      tabBarLabel: ({ focused }: { focused: boolean }) => (
+        <Text
+          style={[
+            paper.fonts.labelMedium,
+            styles.tabLabel,
+            {
+              color: focused
+                ? paper.colors.onSurface
+                : paper.colors.onSurfaceVariant,
+            },
+          ]}
+        >
+          {labels[route.name]}
+        </Text>
+      ),
+      tabBarButton: (props: BottomTabBarButtonProps) => (
+        <CustomTabBarButton {...props} />
+      ),
+    }),
+    [paper, isKeyboardVisible],
+  );
+
+  const tabs = useMemo(() => TABS, []);
 
   return (
     <Tab.Navigator
       initialRouteName="Chats"
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarStyle: isKeyboardVisible
-          ? { display: 'none' }
-          : [
-              styles.tabBar,
-              {
-                backgroundColor: paper.colors.elevation.level2,
-                borderTopColor: paper.colors.outlineVariant,
-              },
-            ],
-        animation: 'none',
-        tabBarIcon: ({ focused }) => (
-          <TabIcon focused={focused} name={icons[route.name]} />
-        ),
-        tabBarShowLabel: true,
-        tabBarLabel: ({ focused }) => (
-          <Text
-            style={[
-              paper.fonts.labelMedium,
-              styles.tabLabel,
-              {
-                color: focused
-                  ? paper.colors.onSurface
-                  : paper.colors.onSurfaceVariant,
-              },
-            ]}
-          >
-            {labels[route.name]}
-          </Text>
-        ),
-        tabBarButton: props => <CustomTabBarButton {...props} />,
-      })}
+      screenOptions={screenOptions}
     >
-      {TABS.map(tab => (
+      {tabs.map(tab => (
         <Tab.Screen
           key={tab.name}
           name={tab.name}

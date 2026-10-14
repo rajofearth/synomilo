@@ -1,6 +1,10 @@
 package com.rajofearth.synomilo
 
+import android.app.NotificationManager
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -143,6 +147,56 @@ class CallIntentModule(reactContext: ReactApplicationContext) :
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP,
                 )
+            }
+            reactApplicationContext.startActivity(intent)
+            promise.resolve(true)
+        } catch (error: Throwable) {
+            promise.resolve(false)
+        }
+    }
+
+    /**
+     * Whether a posted notification's full-screen intent will actually be allowed
+     * to launch over the keyguard.
+     *
+     * Below Android 14 (API 34) the declared USE_FULL_SCREEN_INTENT permission was
+     * the whole story. From 14 it is special app access instead: a non-calling app
+     * has its full-screen intents blocked by default and the notification is
+     * silently downgraded to a heads-up. Declaring MANAGE_OWN_CALLS is a
+     * prerequisite but is not sufficient on its own - the user has to grant
+     * "Full screen notifications".
+     *
+     * True below API 34: the permission is there and the system grants it.
+     */
+    @ReactMethod
+    fun canRingOverLockScreen(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                promise.resolve(true)
+                return
+            }
+            val manager =
+                reactApplicationContext.getSystemService(NotificationManager::class.java)
+            promise.resolve(manager?.canUseFullScreenIntent() ?: false)
+        } catch (error: Throwable) {
+            promise.resolve(false)
+        }
+    }
+
+    /**
+     * Sends the user to the "Full screen notifications" system screen so the grant
+     * can be made. No-ops (resolves false) below API 34, where nothing is needed.
+     */
+    @ReactMethod
+    fun requestRingOverLockScreen(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                promise.resolve(false)
+                return
+            }
+            val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                data = Uri.fromParts("package", reactApplicationContext.packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             reactApplicationContext.startActivity(intent)
             promise.resolve(true)

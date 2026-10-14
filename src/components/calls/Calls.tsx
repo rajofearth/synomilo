@@ -56,14 +56,15 @@ const Calls = () => {
   const theme = useTheme();
   const navigation = useNavigation<any>();
   const { token } = useSession();
-  const calls = useQuery(
+  const historyResult = useQuery(
     api.calls.history,
     token ? { token } : 'skip',
-  ) as CallRow[] | undefined;
+  ) as { calls?: CallRow[]; hasMore?: boolean; cursor?: number | null } | undefined;
   const startCall = useMutation(api.calls.start);
   const [startingId, setStartingId] = useState<string | null>(null);
 
-  const data = useMemo(() => calls ?? [], [calls]);
+  // `calls.history` returns `{ calls, hasMore, cursor }`, not a bare array.
+  const data = useMemo(() => historyResult?.calls ?? [], [historyResult]);
 
   const callBack = useCallback(
     async (item: CallRow) => {
@@ -195,7 +196,7 @@ const Calls = () => {
         </Text>
       </View>
 
-      {calls === undefined ? (
+      {historyResult === undefined ? (
         <View style={styles.center}>
           <ActivityIndicator color={theme.colors.primary} />
         </View>
