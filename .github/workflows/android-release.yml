@@ -78,4 +78,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: android/app/build/outputs/apk/release/app-release.apk
-          generate_release_notes: true
+          # A real description, not a commit-subject dump. `generate_release_notes`
+          # produced releases whose entire body was one "Full Changelog" link.
+          body_path: docs/release-notes/${{ github.ref_name }}.md
+          fail_on_unmatched_files: false

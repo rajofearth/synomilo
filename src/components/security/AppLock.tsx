@@ -42,6 +42,7 @@ import {
   readLockConfig,
   secureBackendInfo,
   verifyPin,
+  wasAppLockEverConfigured,
   writeLockConfig,
 } from '../../security/secureStore';
 
@@ -170,19 +171,33 @@ export const useAppLock = create<LockState>((set, get) => ({
       });
     } catch {
       /**
-       * Every failure mode here lands on `storeBroken`: a missing keystore entry
-       * and a damaged verifier are both "this install can no longer prove
-       * anything", and both are handled by the reset path rather than by
-       * pretending no lock exists.
+       * An unreadable store is locked-by-default: absence of knowledge is not
+       * absence of a lock, and a broken keystore must never silently drop a gate
+       * somebody is relying on.
+       *
+       * EXCEPT on an install where the lock was never enabled. Gating there
+       * bricks the app - a recovery-only screen with no lock to recover from -
+       * and the store may be unreadable for an innocent reason (no device lock
+       * screen set, an OEM Keystore quirk, a restored /data partition). The
+       * plaintext marker in `wasAppLockEverConfigured()` exists precisely to tell
+       * those two cases apart.
        */
+      const everConfigured = await wasAppLockEverConfigured();
       set({
-        status: 'storeBroken',
-        // Deliberately NOT `enabled: false`. Absence of knowledge is not absence
-        // of a lock; the gate treats `storeBroken` as locked-by-default and only
-        // offers the reset path.
+        status: everConfigured ? 'storeBroken' : 'ready',
+        enabled: everConfigured,
+        // A fresh install that cannot read its store has no lock to honour.
+        pinSet: false,
+        graceMs: DEFAULT_LOCK_GRACE_MS,
         backend: null,
         error: null,
       });
+      if (!everConfigured) {
+        console.warn(
+          '[applock] secure store unavailable on an install with no configured ' +
+            'lock - app lock stays off rather than bricking the app',
+        );
+      }
     }
   },
 

@@ -421,6 +421,46 @@ export async function writeLockConfig(config: LockConfig): Promise<void> {
 }
 
 /**
+ * A PLAINTEXT, non-sensitive marker recording that this install ever had the
+ * app lock turned on.
+ *
+ * Why it exists. The security rule "an unreadable secure store is never
+ * reported as 'lock off'" is correct for someone who HAS a lock - it stops a
+ * broken keystore silently dropping the gate. But on a FRESH install where the
+ * user never enabled the lock, the same rule bricks the app: the store throws,
+ * the app concludes it must be locked, and shows a recovery-only screen with no
+ * lock to recover from.
+ *
+ * This marker separates the two. It lives in ordinary AsyncStorage, so it is
+ * readable exactly when the keystore is not. It holds no secret - just the fact
+ * that a lock was configured - so writing it in the clear costs nothing.
+ *
+ * Set whenever the lock is enabled; cleared only on an explicit disable.
+ */
+const CONFIGURED_MARKER = 'synomilo.applock.configured';
+
+export async function markAppLockConfigured(): Promise<void> {
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage'))
+      .default;
+    await AsyncStorage.setItem(CONFIGURED_MARKER, 'true');
+  } catch {
+    // Best effort. Worst case is the conservative locked-by-default path.
+  }
+}
+
+export async function wasAppLockEverConfigured(): Promise<boolean> {
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage'))
+      .default;
+    return (await AsyncStorage.getItem(CONFIGURED_MARKER)) === 'true';
+  } catch {
+    // Cannot prove it was never configured, so assume the safe direction.
+    return true;
+  }
+}
+
+/**
  * Turns the lock on: the PIN first, then confirmation that it is really there,
  * then the flag. See `writeLockConfig` for why the order is what it is.
  * @throws {SecureStoreUnavailableError}
@@ -434,6 +474,9 @@ export async function enableAppLock(
     throw new Error('PIN verifier did not persist');
   }
   await writeLockConfig({ enabled: true, graceMs });
+  // Written only AFTER the verifier and the flag are both confirmed, so the
+  // marker can never claim a lock exists when none was ever set up.
+  await markAppLockConfigured();
 }
 
 /**
