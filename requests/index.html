@@ -210,47 +210,47 @@
   var SEED = [
     {
       id: 'seed-theme-live',
-      status: 'bug',
+      status: 'done',
       title: 'Theme does not follow the device live',
-      detail: 'src/theme/useAppTheme.ts is meant to be the single reader of useColorScheme(), but the app still needs a restart to repaint when the system flips light/dark.',
+      detail: 'Fixed in v1.1.2. AppCompat night mode was never being populated, so Appearance emitted one correct value at launch and nothing after. One call at startup: AppCompatDelegate.setDefaultNightMode(MODE_NIGHT_FOLLOW_SYSTEM).',
       date: TODAY,
       seed: true
     },
     {
       id: 'seed-ring-sound',
-      status: 'bug',
+      status: 'done',
       title: 'Incoming call sound is reversed',
-      detail: 'The ring is on the outgoing side: the callee hears nothing and the caller hears the ringback twice, or the channel sound plays for the wrong party.',
+      detail: 'Fixed in v1.1.2. The bundled "ringtone" turned out to be 440+480 Hz at equal amplitude, which is the dial tone itself, so the earlier fix swapped a wrong URI for a wrong asset. Incoming now plays the device ringtone. Needs an ear on real hardware.',
       date: TODAY,
       seed: true
     },
     {
       id: 'seed-notification-sticks',
-      status: 'bug',
+      status: 'done',
       title: 'Incoming call notification does not dismiss',
-      detail: 'After accepting or declining, the heads-up notification stays on screen and has to be swiped away by hand.',
+      detail: 'Fixed in v1.1.2. Three leaks: teardown sat after the mutation inside try, the ring activity cancelled nothing on drain or back, and the ongoing notification had no timeout. All exit paths covered, 60s timeout bound added.',
       date: TODAY,
       seed: true
     },
     {
       id: 'seed-biometric-two-step',
-      status: 'bug',
+      status: 'done',
       title: 'Biometric unlock asks twice',
-      detail: 'The lock gate shows one prompt and the app then asks again on the first navigation, so a correct fingerprint still feels like it failed.',
+      detail: 'Fixed in v1.1.2. One prompt per lock episode, claimed before the first await, and the two redundant buttons are gone. The PIN pad is now the floor on installs with no biometric hardware.',
       date: TODAY,
       seed: true
     },
     {
       id: 'seed-accept-while-locked',
-      status: 'bug',
+      status: 'done',
       title: 'Accepting a call while locked prompts for unlock again',
-      detail: 'Accept from the lock screen or a notification, and the app then puts the unlock gate back up on top of the call screen that is already open.',
+      detail: 'Fixed in v1.1.2. The hand-off is stamped before navigation instead of being inferred from call-screen state afterwards, closing the roughly 200ms window where a prompt could open over the call.',
       date: TODAY,
       seed: true
     },
     {
       id: 'seed-profile-clipping',
-      status: 'bug',
+      status: 'done',
       title: 'Profile text is clipped at the right edge',
       detail: 'The username and some of the display name are chopped off, and the sign out button was going with them. Bounded and ellipsised in ProfileScreen.tsx this session. Still needs an on-device check at 320pt with a 32 character username.',
       date: TODAY,
@@ -258,9 +258,9 @@
     },
     {
       id: 'seed-release-notes',
-      status: 'bug',
+      status: 'done',
       title: 'Release descriptions are empty',
-      detail: 'Published releases land on GitHub with no body, or with nothing but a link to the changelog.',
+      detail: 'Fixed in v1.1.1. The workflow was using generate_release_notes; it now reads docs/release-notes/<tag>.md, and every release has real notes.',
       date: TODAY,
       seed: true
     },
@@ -282,9 +282,9 @@
     },
     {
       id: 'seed-em-dashes',
-      status: 'bug',
+      status: 'done',
       title: 'Em dashes used throughout the app',
-      detail: 'User-facing copy carries em dashes that read as generated filler. Plain sentences are wanted.',
+      detail: 'Done in v1.1.2. All 42 removed: 6 in user-facing copy, 36 in comments. Rewritten as sentence structure, not swapped for hyphens.',
       date: TODAY,
       seed: true
     },

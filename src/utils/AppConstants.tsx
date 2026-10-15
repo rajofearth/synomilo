@@ -1,10 +1,18 @@
 export const APP_NAME = 'synomiló';
 
 export const AppConstants = {
-  // Display-only. The updater compares against the APK's `versionName` from
-  // android/app/build.gradle, not this value - this was stale at V5.5.1 and
-  // showed a wrong version in Profile and Settings.
-  versionNumber: '1.0.7',
+  // Unused, and deliberately left as a trap rather than a source of truth.
+  //
+  // The installed version is read from the APK at runtime by
+  // `DeviceInfo.getVersion()`, which returns `versionName` from
+  // android/app/build.gradle. That is the number the updater compares against,
+  // and the only number that cannot drift from what was actually shipped.
+  //
+  // This field drifted to 1.0.7 while the app was at v1.1.1 and nothing read it,
+  // so it caused no harm; but it is a second place to bump a version by mistake
+  // the moment something starts displaying it. Anything that needs the version
+  // should call `DeviceInfo.getVersion()`. Do not "fix" this number.
+  versionNumber: '1.1.3',
   webClientId:
     '',
   iosClientId:
