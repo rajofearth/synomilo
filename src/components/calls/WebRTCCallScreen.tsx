@@ -25,7 +25,7 @@ import Video from 'react-native-video';
 import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import UserAvatar from '../convex/UserAvatar';
-import { dismissCallNotification } from '../../notifications/callNotifications';
+import { cancelAllCallNotifications } from '../../notifications/callNotifications';
 import {
   hideOngoingCallNotification,
   refreshOngoingCallActions,
@@ -109,8 +109,12 @@ const CallScreen = ({ route, navigation }: any) => {
   const setActiveCall = useCallStore(state => state.setActive);
   const setScreenVisible = useCallStore(state => state.setScreenVisible);
 
+  // Reaching the call screen means the ring is over. Both ids, because this also
+  // mounts for a call that is already `active` (resumed from the ongoing-call
+  // notification, or answered on another device), and in that case a stale
+  // `ongoing:` entry is just as wrong as a stale ring.
   useEffect(() => {
-    dismissCallNotification(callId);
+    cancelAllCallNotifications(callId);
   }, [callId]);
 
   useEffect(() => {

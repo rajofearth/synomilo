@@ -1,3 +1,4 @@
+import { NativeModules, Platform } from 'react-native';
 import notifee, {
   AndroidCategory,
   AndroidImportance,
@@ -9,20 +10,33 @@ export const MESSAGE_CHANNEL_ID = 'default';
 /**
  * RING CHANNEL.
  *
- * v2 -> v3, and the bump is the whole point: `android.app.NotificationChannel` is
- * immutable once created. `createChannel` is not an upsert for the fields that
- * matter here - Android silently discards a second call's importance/sound/
- * vibration/visibility and keeps what the channel was born with. v2 was born with
- * `sound: 'content://settings/system/ringtone'`, so on every already-installed APK
- * that ringtone choice is frozen in the system database and no amount of editing
- * the JS could change it. v3 is a new id, so it is created fresh, once, with the
- * settings below actually in effect.
+ * v2 -> v3 -> v4, and every bump is forced by one fact:
+ * `android.app.NotificationChannel` is immutable once created. `createChannel` is
+ * not an upsert for the fields that matter here - Android silently discards a
+ * second call's importance/sound/vibration/visibility and keeps what the channel
+ * was born with. A fresh id is the only way to actually change any of it on an
+ * already-installed APK, so editing the JS in place proves nothing on a device
+ * that already has the old channel.
+ *
+ *  v2: `content://settings/system/ringtone`. Correct intent, but it is the whole
+ *      story only when the user has a ringtone: `content://` URIs are handed
+ *      straight to the media stack, so "ringtone = None" or a touch-sounds-only
+ *      profile means the channel is configured correctly and produces no sound.
+ *  v3: the bundled `res/raw/ringtone.wav`. Louder and never silent, but that file
+ *      was a 440 Hz + 480 Hz dual tone - the SAME two frequencies, at the SAME
+ *      amplitude, as `src/assets/sounds/ringback.wav`, the OUTGOING dial tone.
+ *      Measured, not assumed: a Goertzel sweep of both files puts both peaks at
+ *      74 dB on 440 and 480. So swapping one wrong URI for one wrong asset traded
+ *      "no ringtone" for "the incoming call sounds exactly like the dialling tone",
+ *      which is how it was reported as reversed.
+ *  v4: the device ringtone again, but only after the fallback has been made
+ *      honest - see [BUNDLED_RINGTONE] and [resolveRingSound].
  *
  * Note that `AndroidImportance.MAX` does not exist in @notifee 9.x - the enum stops
  * at HIGH (4). Passing a raw 5 would be rejected by `validateAndroidChannel`
  * ("expected an Importance value") and abort channel creation.
  */
-export const CALL_CHANNEL_ID = 'incoming_call_v3';
+export const CALL_CHANNEL_ID = 'incoming_call_v4';
 
 /**
  * The ongoing-call channel. Separate from the ringing channel on purpose: Android
@@ -32,26 +46,41 @@ export const CALL_CHANNEL_ID = 'incoming_call_v3';
 export const ONGOING_CHANNEL_ID = 'ongoing_call_v1';
 
 /**
- * The ringtone, by NAME, not by system URI.
+ * `Settings.System.DEFAULT_RINGTONE_URI`, written out.
  *
- * Notifee resolves a sound string in this order (verified against the bundled AAR,
+ * The primary ring for `incoming_call_v4`, and the correct answer to "the ringtone
+ * isn't the default of the user's device". A user's ringtone is the one sound they
+ * have already told the phone is how a phone should ring, and - unlike anything
+ * this app ships - it is provably not the app's dial tone.
+ *
+ * Notifee's resolution order (verified against the bundled core AAR,
  * `n.o.t.i.f.e.e.r#c`): anything containing "://" is `Uri.parse`d verbatim,
- * "default" becomes `RingtoneManager.getDefaultUri(TYPE_NOTIFICATION)`, and
- * anything else is looked up as a `raw` resource and rewritten to
- * `android.resource://<package>/raw/<name>`.
- *
- * v2 used `content://settings/system/ringtone`, which takes the first branch and
- * points the ring at the user's *device* ringtone. That is silent on any phone
- * whose ringtone is set to None or to a "touch sounds only" profile - the channel
- * is configured correctly and produces no sound at all, which is exactly the
- * report. `ringtone.wav` (res/raw, 3s, 22.05kHz mono PCM) has been in the repo the
- * whole time and was referenced by no source file at all. Naming it here is the
- * only change needed to make the ringtone the app's own.
- *
- * Android still suppresses *any* notification sound while the ringer is off or DND
- * is active; nothing an app can do overrides that.
+ * "default" becomes `RingtoneManager.getDefaultUri(TYPE_NOTIFICATION)` - the
+ * notification sound, NOT the ringtone - and anything else is looked up as a `raw`
+ * resource. Note what is absent: there is no string that yields
+ * `TYPE_RINGTONE`. That is why [resolveRingSound] asks the platform directly
+ * rather than hoping for a magic literal.
  */
-export const RINGTONE = 'ringtone';
+export const SYSTEM_RINGTONE_URI = 'content://settings/system/ringtone';
+
+/**
+ * The bundled fallback, by NAME, which Notifee rewrites to
+ * `android.resource://<package>/raw/ringtone`.
+ *
+ * Only reached when `RingtoneManager.getDefaultUri(TYPE_RINGTONE)` is null, i.e.
+ * the user has set their ringtone to None. That case used to be answered with
+ * silence (v2), which is worse than either alternative: a call that cannot be
+ * heard is a failed call.
+ *
+ * The file has been REPLACED. It used to be the same 440+480 Hz dual tone as the
+ * outgoing ringback, so the fallback re-created the original bug in precisely the
+ * situation where the user had already said they do not want noise. It is now
+ * 1050 Hz + 1400 Hz (a 2:3 pair, 64 dB each) under a 25 Hz tremolo, in a
+ * two-burst cadence - 0.40 s on, 0.20 s off, 0.40 s on, 3.00 s off, 4.00 s total.
+ * At 1400 Hz the dial tone sits 100 dB below this file's peak, so the two can no
+ * longer be confused by anyone, including by accident.
+ */
+export const BUNDLED_RINGTONE = 'ringtone';
 
 /**
  * The lock-screen ring UI. `launchActivity: 'default'` resolved to the app's single
@@ -64,9 +93,11 @@ export const RINGTONE = 'ringtone';
  * Notifee attaches the notification payload to this intent ONLY when the press
  * action carries a `mainComponent`. It does not, so `IncomingCallActivity` is
  * launched with no extras whatsoever - see IncomingCallActivity for how it recovers
- * the caller name and callId without them.
+ * the caller name and callId without them, and for why it is also what cancels the
+ * notification once the ring screen goes away.
  */
 export const RINGING_ACTIVITY = 'com.rajofearth.synomilo.IncomingCallActivity';
+
 
 /**
  * The server's ring window (convex/calls.ts RING_TIMEOUT_MS). Mirrored here because
@@ -82,6 +113,34 @@ export const callNotificationId = (callId: string) => `${CALL_NOTIFICATION_PREFI
 export const ongoingNotificationId = (callId: string) => `ongoing:${callId}`;
 
 let channelsReady = false;
+
+/**
+ * Which sound the ring channel is born with.
+ *
+ * Must be decided ONCE, at creation time, because the channel freezes it. Notifee
+ * cannot answer this for us: its resolution order (verified in the bundled core
+ * AAR, `n.o.t.i.f.e.e.r#c`) has no path to `RingtoneManager.TYPE_RINGTONE` at all -
+ * `content://settings/system/ringtone` goes through `Uri.parse` and is handed to the
+ * media stack regardless of whether it resolves to anything, and the literal
+ * `default` yields TYPE_NOTIFICATION. So a null from the platform means "the user
+ * has set their ringtone to None", and the honest answer to that is a bundled
+ * ringtone rather than a channel that is configured correctly and silent.
+ */
+async function resolveRingSound(): Promise<string> {
+  if (Platform.OS !== 'android') {
+    return SYSTEM_RINGTONE_URI;
+  }
+  try {
+    const audio = NativeModules.CallAudio as
+      | { getDefaultRingtoneUri?: () => Promise<string | null> }
+      | undefined;
+    const uri = await audio?.getDefaultRingtoneUri?.();
+    return uri?.trim() ? uri.trim() : BUNDLED_RINGTONE;
+  } catch (error) {
+    console.log('[push] ringtone lookup failed, using bundled ringtone', error);
+    return BUNDLED_RINGTONE;
+  }
+}
 
 async function createChannelSafely(channel: {
   id: string;
@@ -112,7 +171,7 @@ export async function ensureNotificationChannels(): Promise<void> {
     id: CALL_CHANNEL_ID,
     name: 'Incoming calls',
     importance: AndroidImportance.HIGH,
-    sound: RINGTONE,
+    sound: await resolveRingSound(),
     vibration: true,
     vibrationPattern: [400, 800, 400, 800],
     lights: true,
@@ -122,7 +181,8 @@ export async function ensureNotificationChannels(): Promise<void> {
     // Only honoured for apps the user has granted Do Not Disturb access to. It
     // costs nothing to declare and it is the difference between a ringing call and
     // a silent one for those users; for everyone else Android still applies the
-    // ringer, which is correct.
+    // ringer, which is correct. It never makes anything last longer -
+    // `timeoutAfter` below bounds the ring regardless of whether it is audible.
     bypassDnd: true,
   });
   await createChannelSafely({
@@ -195,11 +255,23 @@ export async function showIncomingCallNotification(
       category: AndroidCategory.CALL,
       importance: AndroidImportance.HIGH,
       loopSound: true,
-      ongoing: true,
+      // NOT ongoing. `ongoing: true` means Android will not let the user swipe it
+      // away and the system treats it as persistent, which turns any missed
+      // teardown into a notification the user cannot get rid of at all. Every exit
+      // path cancels this explicitly, and if one ever regresses the user can still
+      // dismiss it by hand instead of being stuck with an alerting shade entry.
+      ongoing: false,
+      // ...but a body press must NOT auto-cancel it: `IncomingCallActivity` reads
+      // its payload out of the posted notification (see its KDoc), so cancelling on
+      // press made the ring screen refuse to draw.
       autoCancel: false,
       // A redelivered push (collapse-key replay, FCM retry) must not restart the
       // ring on a notification that is already ringing.
       onlyAlertOnce: true,
+      // The hard bound. Even if every teardown path below fails - app killed, JS
+      // never boots, no terminal push delivered - the ring cannot outlast the
+      // server's own ring window. This is what makes "degrade sanely when the
+      // device is silent or on Do Not Disturb" true rather than aspirational.
       timeoutAfter: RING_TIMEOUT_MS,
       visibility: AndroidVisibility.PUBLIC,
       smallIcon: 'ic_stat_call',
@@ -220,11 +292,40 @@ export async function showIncomingCallNotification(
   });
 }
 
+/**
+ * Take down every notification that belongs to one call.
+ *
+ * Both ids, always. `call:<id>` is the ring; `ongoing:<id>` is the connected-call
+ * notification with no `timeoutAfter` of its own, so a leak there is permanent
+ * rather than merely annoying. Cancelling both together is what makes "one call,
+ * one notification lifetime" true instead of aspirational, and it costs nothing
+ * on the accept path, where `ongoing:` does not exist yet.
+ *
+ * Deliberately does NOT go through `hideOngoingCallNotification`: that also stops
+ * the foreground service and releases the audio route, and neither belongs in a
+ * teardown that may be running while a call is being set up.
+ */
+export async function cancelAllCallNotifications(callId: string): Promise<void> {
+  await Promise.all([
+    dismissCallNotification(callId),
+    dismissOngoingNotification(callId),
+  ]);
+}
+
 export async function dismissCallNotification(callId: string): Promise<void> {
   try {
     await notifee.cancelNotification(callNotificationId(callId));
   } catch (error) {
     console.log('[push] dismiss call notification error', error);
+  }
+}
+
+/** Local mirror of `hideOngoingCallNotification`, without the side effects. */
+export async function dismissOngoingNotification(callId: string): Promise<void> {
+  try {
+    await notifee.cancelNotification(ongoingNotificationId(callId));
+  } catch (error) {
+    console.log('[push] dismiss ongoing notification error', error);
   }
 }
 

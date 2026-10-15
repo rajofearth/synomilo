@@ -20,15 +20,15 @@ import UserAvatar from './UserAvatar';
 /**
  * Colours come from react-native-paper's theme, never from a second theme system.
  *
- * The UIKit theme is frozen at `App.tsx`'s first render — one palette is handed to both
- * its `light` and `dark` slots — so anything reading it never follows the OS scheme.
+ * The UIKit theme is frozen at `App.tsx`'s first render, because one palette is handed to
+ * both its `light` and `dark` slots, so anything reading it never follows the OS scheme.
  * Paper's `PaperProvider` is rebuilt from `useColorScheme()`, so it does. This file used
  * to read `theme.color.*` (UIKit) for its background and text and `theme.colors.*`
  * (Paper) for its buttons, which is why switching the phone to light mode left this
  * screen looking exactly the same while the rest of the app changed.
  *
- * The two call buttons were `#16A34A` and `#7C3AED` — the only saturated colour left in
- * the app, and invisible-as-hue under a strict monochrome palette. They are expressed
+ * The two call buttons were `#16A34A` and `#7C3AED`, the only saturated colour left in
+ * the app and invisible-as-hue under a strict monochrome palette. They are expressed
  * with the paper theme's `primary` / `surfaceVariant` roles now, which also keeps them
  * distinguishable on both schemes without inventing a second palette.
  */
@@ -75,7 +75,7 @@ const ContactInfoScreen = ({ route, navigation }: any) => {
  * button) and `buttonColor` (for the primary) as a `filled ? … : …` pair, which is how
  * the `#16A34A` / `#7C3AED` pair got there in the first place; both now go through
  * `buttonColor`, which both arms accept. For the outlined arm that is the *border*, so
- * the audio button takes `outline` — `surfaceVariant` there would have been a border
+ * the audio button takes `outline`, because `surfaceVariant` there would have been a border
  * invisible against the background.
  */
 const renderCallButton = (

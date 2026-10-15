@@ -46,6 +46,7 @@ import notifee, { EventType } from '@notifee/react-native';
 import messaging from '@react-native-firebase/messaging';
 import { api } from './convex/_generated/api';
 import { navigate } from './src/navigation/NavigationService';
+import { noteCallHandOff } from './src/security/appLockPolicy';
 
 const AppInner = (): React.ReactElement => {
   const paperTheme = useTheme();
@@ -103,6 +104,13 @@ const AppInner = (): React.ReactElement => {
         return;
       }
       lastOpenedCall.current = { callId: next.callId, at: Date.now() };
+      // Answering stands the app lock down, and this has to be stamped before
+      // navigation rather than derived from it. The call screen appearing is
+      // React state that has not happened yet, and the gate can arm and schedule
+      // its fingerprint prompt in the gap. Marking the hand-off here means the
+      // lock sees "answered" at the instant it is decided rather than a few
+      // hundred milliseconds later, so the prompt never opens over the call.
+      noteCallHandOff();
       navigate('CallScreen', {
         callId: next.callId,
         type: next.type === 'video' ? 'video' : 'audio',
@@ -165,6 +173,11 @@ const AppInner = (): React.ReactElement => {
       if (state !== 'active') {
         return;
       }
+      // Returning to the foreground by way of the call screen is the second
+      // path into a call: the accept ran in a native activity, so JS woke up
+      // after the navigation rather than driving it. Without this stamp the lock
+      // would re-arm against a resume that was really an answer.
+      noteCallHandOff();
       getFcmToken().then(value => {
         if (!cancelled && value && value !== fcmTokenRef.current) {
           store(token ?? null, value);

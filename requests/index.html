@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Requests</title>
+<style>
+  /* Monochrome on purpose. No web fonts, no CDNs, no images, no framework. */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 24px 16px 64px;
+    background: #ffffff;
+    color: #000000;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  main { max-width: 760px; margin: 0 auto; }
+
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.2px; }
+  .sub { margin: 0 0 24px; color: #666666; font-size: 14px; }
+
+  h2 {
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin: 32px 0 10px;
+  }
+
+  a { color: #000000; }
+
+  /* ---- form ---- */
+  .card {
+    border: 1px solid #000000;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .form { padding: 16px; display: grid; gap: 10px; }
+
+  label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    color: #666666;
+  }
+
+  input[type="text"], select, textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #000000;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #000000;
+    font: inherit;
+  }
+
+  textarea { resize: vertical; min-height: 68px; }
+
+  button {
+    font: inherit;
+    padding: 8px 14px;
+    border: 1px solid #000000;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #000000;
+    cursor: pointer;
+  }
+
+  button:hover { background: #000000; color: #ffffff; }
+  button:focus-visible, input:focus-visible, select:focus-visible,
+  textarea:focus-visible { outline: 2px solid #000000; outline-offset: 1px; }
+
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row > div:first-child { flex: 0 0 140px; }
+
+  /* ---- filters ---- */
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; }
+  .filters button[aria-pressed="true"] { background: #000000; color: #ffffff; }
+
+  /* ---- list ---- */
+  #list { display: grid; gap: 10px; margin-top: 16px; }
+
+  .item {
+    border: 1px solid #000000;
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #ffffff;
+  }
+
+  .item header {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    border: 1px solid #000000;
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .tag[data-status="bug"] { background: #000000; color: #ffffff; }
+
+  .title { font-size: 16px; font-weight: 600; flex: 1 1 240px; min-width: 0; }
+
+  .when { font-size: 12px; color: #666666; font-variant-numeric: tabular-nums; }
+
+  .detail { margin: 8px 0 0; color: #333333; font-size: 14px; white-space: pre-wrap; }
+
+  .actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .actions select { width: auto; padding: 4px 8px; font-size: 13px; }
+  .actions .seed { font-size: 12px; color: #666666; }
+
+  .empty {
+    border: 1px dashed #000000;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    color: #666666;
+  }
+
+  .warn { margin-top: 12px; font-size: 13px; }
+
+  /* ---- export ---- */
+  details { margin-top: 32px; }
+  summary { cursor: pointer; font-size: 13px; }
+  details textarea { margin-top: 10px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  .hint { font-size: 12px; color: #666666; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Requests</h1>
+  <p class="sub">
+    Type a request below. It is saved in this browser only. The board file on
+    disk is the source of truth.
+  </p>
+
+  <h2>Add a request</h2>
+  <form class="card form" id="add-form">
+    <div class="row">
+      <div>
+        <label for="status">Status</label>
+        <select id="status" name="status">
+          <option value="bug" selected>Bug</option>
+          <option value="feature">Feature</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label for="title">Title</label>
+        <input type="text" id="title" name="title" maxlength="120" required
+               placeholder="One line, the short version">
+      </div>
+    </div>
+    <div>
+      <label for="detail">Detail (optional)</label>
+      <textarea id="detail" name="detail" maxlength="2000"
+                placeholder="Where you saw it, what you expected instead."></textarea>
+    </div>
+    <div><button type="submit">Add to the board</button></div>
+    <p class="hint" id="storage-warning" hidden>
+      This browser will not let the page save anything, so additions will be
+      lost on refresh.
+    </p>
+  </form>
+
+  <h2>Board</h2>
+  <div class="filters" id="filters"></div>
+  <div id="list"></div>
+
+  <details>
+    <summary>Copy the board as JSON</summary>
+    <textarea id="export" rows="10" readonly></textarea>
+    <p class="hint">
+      Select it all and copy, then paste it into
+      <code>requests/index.html</code> so the request lives in the file too.
+    </p>
+  </details>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var KEY = 'synomilo.requests.v1';
+  var STATUSES = ['bug', 'feature', 'done'];
+  var LABELS = { bug: 'Bug', feature: 'Feature', done: 'Done' };
+
+  /* Bugs first, then features, then done. Newest first inside each group.
+     ISO dates are YYYY-MM-DD, so comparing them as strings is comparing them
+     as dates. */
+  var RANK = { bug: 0, feature: 1, done: 2 };
+
+  var TODAY = '2026-10-15';
+
+  /*
+   * Seeded from the open bugs of the 2026-10-15 session. This array is the part
+   * of the board that lives in git; anything added through the form lands in
+   * localStorage instead.
+   */
+  var SEED = [
+    {
+      id: 'seed-theme-live',
+      status: 'bug',
+      title: 'Theme does not follow the device live',
+      detail: 'src/theme/useAppTheme.ts is meant to be the single reader of useColorScheme(), but the app still needs a restart to repaint when the system flips light/dark.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-ring-sound',
+      status: 'bug',
+      title: 'Incoming call sound is reversed',
+      detail: 'The ring is on the outgoing side: the callee hears nothing and the caller hears the ringback twice, or the channel sound plays for the wrong party.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-notification-sticks',
+      status: 'bug',
+      title: 'Incoming call notification does not dismiss',
+      detail: 'After accepting or declining, the heads-up notification stays on screen and has to be swiped away by hand.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-biometric-two-step',
+      status: 'bug',
+      title: 'Biometric unlock asks twice',
+      detail: 'The lock gate shows one prompt and the app then asks again on the first navigation, so a correct fingerprint still feels like it failed.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-accept-while-locked',
+      status: 'bug',
+      title: 'Accepting a call while locked prompts for unlock again',
+      detail: 'Accept from the lock screen or a notification, and the app then puts the unlock gate back up on top of the call screen that is already open.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-profile-clipping',
+      status: 'bug',
+      title: 'Profile text is clipped at the right edge',
+      detail: 'The username and some of the display name are chopped off, and the sign out button was going with them. Bounded and ellipsised in ProfileScreen.tsx this session. Still needs an on-device check at 320pt with a 32 character username.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-release-notes',
+      status: 'bug',
+      title: 'Release descriptions are empty',
+      detail: 'Published releases land on GitHub with no body, or with nothing but a link to the changelog.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-updater',
+      status: 'bug',
+      title: 'Updater experience is poor',
+      detail: 'No progress, no failure reason, no way to tell whether a download is running, stuck or finished before it asks you to install.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-spinners',
+      status: 'bug',
+      title: 'Loading spinners everywhere, no caching, media re-fetched repeatedly',
+      detail: 'Lists show a spinner instead of the last known contents, and the same image or video is downloaded again each time it scrolls back into view.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-em-dashes',
+      status: 'bug',
+      title: 'Em dashes used throughout the app',
+      detail: 'User-facing copy carries em dashes that read as generated filler. Plain sentences are wanted.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-profile-stats',
+      status: 'done',
+      title: 'Profile screen earns its space',
+      detail: 'Three account counts, a call summary, member since, the live app lock state and the current colour scheme, in the SettingsScreen card and row language.',
+      date: TODAY,
+      seed: true
+    },
+    {
+      id: 'seed-board',
+      status: 'done',
+      title: 'Shared request board added',
+      detail: 'This page. Seeded with the bugs above, backed by localStorage, no dependencies.',
+      date: TODAY,
+      seed: true
+    }
+  ];
+
+  /* Every piece of user text goes through this before it reaches innerHTML. */
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, function (character) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[character];
+    });
+  }
+
+  function byStatusThenNewest(a, b) {
+    var rankA = RANK[a.status];
+    var rankB = RANK[b.status];
+    if (rankA !== rankB) {
+      return rankA - rankB;
+    }
+    if (a.date === b.date) {
+      return 0;
+    }
+    return a.date < b.date ? 1 : -1;
+  }
+
+  function today() {
+    var now = new Date();
+    var month = String(now.getMonth() + 1);
+    var day = String(now.getDate());
+    if (month.length < 2) { month = '0' + month; }
+    if (day.length < 2) { day = '0' + day; }
+    return now.getFullYear() + '-' + month + '-' + day;
+  }
+
+  function newId() {
+    return 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  }
+
+  function normalise(entry) {
+    if (!entry || typeof entry !== 'object') { return null; }
+    if (typeof entry.title !== 'string' || entry.title.trim() === '') { return null; }
+    var status = STATUSES.indexOf(entry.status) === -1 ? 'bug' : entry.status;
+    var date = typeof entry.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(entry.date)
+      ? entry.date
+      : today();
+    return {
+      id: typeof entry.id === 'string' && entry.id !== '' ? entry.id : newId(),
+      status: status,
+      title: entry.title.trim().slice(0, 120),
+      detail: typeof entry.detail === 'string' ? entry.detail.trim().slice(0, 2000) : '',
+      date: date,
+      seed: entry.seed === true
+    };
+  }
+
+  /* file:// pages get localStorage in every current browser, but it can still
+     be refused (private mode, blocked storage). Never let that throw. */
+  var canStore = true;
+
+  function load() {
+    var raw = null;
+    try {
+      raw = window.localStorage.getItem(KEY);
+    } catch (error) {
+      canStore = false;
+    }
+    if (raw === null) {
+      var seeded = SEED.map(normalise).filter(Boolean);
+      save(seeded);
+      return seeded;
+    }
+    try {
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) { throw new Error('not a list'); }
+      return parsed.map(normalise).filter(Boolean);
+    } catch (error) {
+      canStore = false;
+      return SEED.map(normalise).filter(Boolean);
+    }
+  }
+
+  function save(entries) {
+    try {
+      window.localStorage.setItem(KEY, JSON.stringify(entries));
+    } catch (error) {
+      canStore = false;
+    }
+  }
+
+  var entries = load();
+  var filter = 'all';
+
+  var listNode = document.getElementById('list');
+  var filtersNode = document.getElementById('filters');
+  var exportNode = document.getElementById('export');
+  var formNode = document.getElementById('add-form');
+  var statusNode = document.getElementById('status');
+  var titleNode = document.getElementById('title');
+  var detailNode = document.getElementById('detail');
+  var warningNode = document.getElementById('storage-warning');
+
+  function optionsHtml(selected) {
+    return STATUSES.map(function (status) {
+      return '<option value="' + escapeHtml(status) + '"' +
+        (status === selected ? ' selected' : '') + '>' +
+        escapeHtml(LABELS[status]) + '</option>';
+    }).join('');
+  }
+
+  function render() {
+    var counts = { all: entries.length, bug: 0, feature: 0, done: 0 };
+    entries.forEach(function (entry) {
+      if (counts[entry.status] !== undefined) {
+        counts[entry.status] += 1;
+      }
+    });
+
+    var names = ['all'].concat(STATUSES);
+    filtersNode.innerHTML = names.map(function (name) {
+      var label = name === 'all' ? 'All' : LABELS[name];
+      return '<button type="button" data-filter="' + escapeHtml(name) + '"' +
+        ' aria-pressed="' + (name === filter ? 'true' : 'false') + '">' +
+        escapeHtml(label) + ' (' + counts[name] + ')</button>';
+    }).join('');
+
+    var shown = entries.filter(function (entry) {
+      return filter === 'all' || entry.status === filter;
+    }).sort(byStatusThenNewest);
+
+    if (shown.length === 0) {
+      listNode.innerHTML = '<div class="empty">Nothing here. Add something ' +
+        'above, or pick another filter.</div>';
+    } else {
+      listNode.innerHTML = shown.map(function (entry) {
+        var tag = '<span class="tag" data-status="' + escapeHtml(entry.status) + '">' +
+          escapeHtml(LABELS[entry.status]) + '</span>';
+        var title = '<span class="title">' + escapeHtml(entry.title) + '</span>';
+        var when = '<span class="when">' + escapeHtml(entry.date) + '</span>';
+        var detail = entry.detail
+          ? '<p class="detail">' + escapeHtml(entry.detail) + '</p>'
+          : '';
+        var note = entry.seed
+          ? '<span class="seed">In requests/index.html</span>'
+          : '<button type="button" data-remove="' + escapeHtml(entry.id) + '">Remove</button>';
+        return '<article class="item">' +
+          '<header>' + tag + title + when + '</header>' +
+          detail +
+          '<div class="actions">' +
+          '<label for="st-' + escapeHtml(entry.id) + '" class="seed">Status</label>' +
+          '<select id="st-' + escapeHtml(entry.id) + '" data-status-id="' +
+          escapeHtml(entry.id) + '">' + optionsHtml(entry.status) + '</select>' +
+          note +
+          '</div>' +
+          '</article>';
+      }).join('');
+    }
+
+    exportNode.value = JSON.stringify(entries, null, 2);
+    warningNode.hidden = canStore;
+  }
+
+  filtersNode.addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-filter]');
+    if (!button) { return; }
+    filter = button.getAttribute('data-filter');
+    render();
+  });
+
+  listNode.addEventListener('change', function (event) {
+    var select = event.target;
+    var id = select && select.getAttribute('data-status-id');
+    if (!id) { return; }
+    var next = select.value;
+    entries = entries.map(function (entry) {
+      if (entry.id !== id) { return entry; }
+      return normalise({
+        id: entry.id,
+        status: next,
+        title: entry.title,
+        detail: entry.detail,
+        date: entry.date,
+        seed: entry.seed
+      });
+    });
+    save(entries);
+    render();
+  });
+
+  listNode.addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-remove]');
+    if (!button) { return; }
+    var id = button.getAttribute('data-remove');
+    entries = entries.filter(function (entry) {
+      return entry.id !== id;
+    });
+    save(entries);
+    render();
+  });
+
+  formNode.addEventListener('submit', function (event) {
+    event.preventDefault();
+    var title = titleNode.value.trim();
+    if (title === '') {
+      titleNode.focus();
+      return;
+    }
+    entries = [normalise({
+      id: newId(),
+      status: statusNode.value,
+      title: title,
+      detail: detailNode.value,
+      date: today()
+    })].filter(Boolean).concat(entries);
+    save(entries);
+    titleNode.value = '';
+    detailNode.value = '';
+    filter = 'all';
+    render();
+    titleNode.focus();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

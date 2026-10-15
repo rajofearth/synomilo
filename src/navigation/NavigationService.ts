@@ -12,8 +12,8 @@ interface PendingNavigation {
  * A QUEUE, not a slot.
  *
  * This was a single `PendingNavigation | null`, so a second navigate() before the container
- * was ready overwrote the first. Deep-linking a thread notification issues two in a row —
- * Messages, then ThreadView — and the conversation underneath was being erased, leaving
+ * was ready overwrote the first. Deep-linking a thread notification issues two in a row
+ * (Messages, then ThreadView) and the conversation underneath was being erased, leaving
  * ThreadView with nothing to go back to (or, when both were queued and only one survived,
  * nothing at all).
  */
@@ -22,8 +22,8 @@ let pendingNavigations: PendingNavigation[] = [];
 /**
  * A reset is ABSOLUTE: it replaces the entire stack, so it is a slot, not a queue.
  *
- * Sign-out can fire before the container is ready — SessionProvider sits ABOVE
- * NavigationContainer in the tree — and without this the reset was simply dropped, which is
+ * Sign-out can fire before the container is ready, because SessionProvider sits ABOVE
+ * NavigationContainer in the tree. Without this the reset was simply dropped, which is
  * exactly how logout became a one-way door: `navigate()` had a queue to fall back on, the
  * reset had nowhere to go, and the user stayed in authenticated UI with no session.
  */
@@ -52,8 +52,8 @@ export function navigate<RouteName extends keyof RootStackParamList>(
  * every intermediate screen on the back stack, so the hardware back button would walk the
  * user straight back into a UI that no longer has a session.
  *
- * Returns whether the reset was applied immediately. Never rejects — a navigation failure
- * during sign-out must not surface as a failed logout.
+ * Returns whether the reset was applied immediately. Never rejects, because a navigation
+ * failure during sign-out must not surface as a failed logout.
  */
 export function resetTo<RouteName extends keyof RootStackParamList>(
   name: RouteName,
@@ -78,9 +78,9 @@ export function resetTo<RouteName extends keyof RootStackParamList>(
 }
 
 /**
- * Sign out of the authenticated UI. The single logout destination — every logout entry
- * point (Profile, Settings, the legacy Conversations tooltip, a server-side revocation, an
- * expired session) funnels through here.
+ * Sign out of the authenticated UI. This is the single logout destination: every logout
+ * entry point (Profile, Settings, the legacy Conversations tooltip, a server-side
+ * revocation, an expired session) funnels through here.
  */
 export function resetToLogin(): Promise<boolean> {
   return resetTo('Login');

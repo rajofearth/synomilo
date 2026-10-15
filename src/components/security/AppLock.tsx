@@ -13,18 +13,23 @@ import type { AppStateStatus } from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import { ActivityIndicator, Button, Text, useTheme } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from 'convex/react';
 import { create } from 'zustand';
+import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { useIsKeyboardVisible } from '../../hooks/useIsKeyboardVisible';
 import { useCallStore } from '../calls/callStore';
 import { APP_NAME } from '../../utils/AppConstants';
 import {
+  BIOMETRIC_RETRY_COOLDOWN_MS,
   authenticateWithBiometrics,
   cancelBiometricPrompt,
   describeBiometricFailure,
   getBiometricAvailability,
 } from '../../security/biometric';
 import type { BiometricAvailability } from '../../security/biometric';
+import { callInterruptsLock, callReleasesGate, mayPresentPrompt } from '../../security/appLockPolicy';
+import type { CallSignal } from '../../security/appLockPolicy';
 import {
   APP_LOCK_GRACE_OPTIONS,
   DEFAULT_LOCK_GRACE_MS,
@@ -51,7 +56,12 @@ import {
  * THE APP LOCK
  * ------------------------------------------------------------------------
  *
- * Biometric first, app PIN second, and a reset path that always works.
+ * One step, usually zero: the OS prompt is presented for you, and the PIN pad
+ * is what is left when it cannot be.
+ *
+ * There is no "Unlock" button in front of the fingerprint prompt. There never
+ * should be - the prompt IS the button, and putting a second one in front of it
+ * is the two-tap unlock this screen used to have.
  *
  * Nothing biometric is ever captured, hashed or stored here or anywhere else. The
  * OS returns a verified/not-verified result and nothing else, so the only secret
@@ -59,7 +69,7 @@ import {
  * verifier inside the encrypted store (see src/security/secureStore.ts). The
  * fingerprint is a *gate* the OS holds; the PIN is the *key* this app holds.
  *
- * Three rules the rest of this file exists to keep:
+ * Five rules the rest of this file exists to keep:
  *
  *   1. NEVER render what the user is typing, and never render a length indicator.
  *      The field is `secureTextEntry` and there are deliberately no per-character
@@ -75,6 +85,14 @@ import {
  *      wrong PIN must not be able to brick an install, so the reset signs out -
  *      which works through AsyncStorage/Convex and has nothing to do with the
  *      keystore - and only then tries to wipe the lock.
+ *
+ *   4. AT MOST ONE PROMPT PER LOCK EPISODE. Not "one at a time", one ever. The
+ *      OS prompt can send this app to the background on its way to showing the
+ *      device-credential fallback, and the return trip must not read as a fresh
+ *      excursion. See `promptCausedBackground` and `mayPresentPrompt`.
+ *
+ *   5. NEVER stand between the user and a call. Not over a ringing one, not
+ *      over the moment they answer it, not over a live one. See `callSignal`.
  */
 
 // ---------------------------------------------------------------- config store
@@ -420,6 +438,21 @@ const formatCountdown = (ms: number): string => {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 };
 
+/**
+ * How long after arming the automatic prompt is presented, in milliseconds.
+ *
+ * One short beat, not a spinner and not a "get ready" step. Android reports the
+ * host activity resumed a moment before it will actually host a dialog, and a
+ * prompt raised in the same tick loses that race often enough to matter - the
+ * native module answers with `E_ACTIVITY_NOT_RESUMED` and the user is dropped
+ * onto the PIN pad with no fingerprint prompt ever shown.
+ *
+ * The gate is already up and already opaque for the whole of this window, so
+ * nothing is exposed while it runs, and nothing is added to the number of taps
+ * the user has to make: the prompt appears either way, just not instantly.
+ */
+const AUTO_PROMPT_SETTLE_MS = 400;
+
 const AppLock: React.FC = () => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -454,35 +487,108 @@ const AppLock: React.FC = () => {
   const [showPin, setShowPin] = useState(false);
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * A prompt has actually been raised and is awaiting its result, as opposed to
+   * being one settle-tick away. Drives the one line of text on the screen and
+   * nothing else - the prompt is a system window, so there is no progress to
+   * draw and nothing here should pretend there is.
+   */
+  const [prompting, setPrompting] = useState(false);
   const [message, setMessage] = useState<{ tone: StatusTone; text: string } | null>(null);
   const [lockedUntil, setLockedUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
 
   const backgroundedAt = useRef<number | null>(null);
-  const promptedThisEpisode = useRef(false);
+  /**
+   * Monotonic id of the current lock episode. Bumped by `armLock` and by nothing
+   * else, which is what makes "one prompt per episode" a fact about the state
+   * rather than a promise about the call sites.
+   */
+  const episode = useRef(0);
+  /**
+   * The episode whose prompt has already been presented, or -1.
+   *
+   * A separate ref rather than a boolean on `episode`, because re-arming has to
+   * leave the record of what has already happened intact. A boolean has to be
+   * cleared to re-arm, and clearing it is the instant a second prompt becomes
+   * reachable.
+   */
+  const presentedEpisode = useRef(-1);
   const promptInFlight = useRef(false);
+  /**
+   * Set when the app went to the background while our own prompt was up, which
+   * the OS does routinely on the way to showing the device-credential fallback.
+   * That excursion is not the user leaving, so returning from it must not re-arm
+   * and must not present again. Without this the prompt cancels itself and a
+   * second one arrives on the way back in - the reported double prompt.
+   */
+  const promptCausedBackground = useRef(false);
+  /**
+   * Set when *we* tore the prompt down (backgrounded, or released the gate for a
+   * call). A dismissal the app caused is not a failure to report to the user as
+   * though they had done something wrong.
+   */
+  const suppressFailureCopy = useRef(false);
+  /** Wall-clock ms until which Android's own lockout backoff is still running. */
+  const lockoutUntil = useRef(0);
+  /**
+   * Mirrors of the call signal and of `AppState`, for the listeners that are
+   * registered once and must not close over a render's values.
+   */
+  const appActive = useRef(AppState.currentState === 'active');
+  const callSignal = useRef<CallSignal>({
+    connected: false,
+    ringing: false,
+    callScreenVisible: false,
+  });
   const shake = useRef(new Animated.Value(0)).current;
 
-const biometricAvailable = availability?.available === true;
-const storeBroken = status === 'storeBroken';
-const unsupported = status === 'unsupported';
+  const biometricAvailable = availability?.available === true;
+  const storeBroken = status === 'storeBroken';
+  const unsupported = status === 'unsupported';
 
-/**
- * Whether the PIN can be offered at all.
- *
- * `pinSet` is only meaningful when the store could actually be read. On a
- * `storeBroken` install `hasPin()` threw, which says nothing about whether a
- * verifier exists - so the field is hidden rather than offered on a guess.
- */
-const pinUsable = pinSet && !storeBroken;
+  /**
+   * Whether the PIN can be offered at all.
+   *
+   * `pinSet` is only meaningful when the store could actually be read. On a
+   * `storeBroken` install `hasPin()` threw, which says nothing about whether a
+   * verifier exists - so the field is hidden rather than offered on a guess.
+   */
+  const pinUsable = pinSet && !storeBroken;
 
-/**
- * Whether there is any way forward that does not involve a reset.
- *
- * A lock with nothing to unlock *with* cannot be satisfied, and pretending
- * otherwise would present an Unlock button that can never work.
- */
-const recoveryOnly = !pinUsable && !biometricAvailable;
+  /**
+   * Whether there is any way forward that does not involve a reset.
+   *
+   * A lock with nothing to unlock *with* cannot be satisfied, and pretending
+   * otherwise would present an Unlock button that can never work.
+   */
+  const recoveryOnly = !pinUsable && !biometricAvailable;
+
+  /**
+   * What the lock can see of the call that may be happening right now.
+   *
+   * `useCallStore.active` alone is not enough, and this is the specific gap that
+   * produced "I accept the call and it asks me for my biometric pin": between the
+   * Accept press and `WebRTCCallScreen` reporting the call active there is a
+   * window measured in hundreds of milliseconds and a query round trip, and that
+   * window is exactly when the resume handler decides to re-lock. `ringing`
+   * covers the resume itself and `callScreenVisible` covers a cold start
+   * launched by the accept, so between them there is no gap left.
+   *
+   * All three are false when Convex is unreachable, which lands on the
+   * fail-closed side: the lock comes up.
+   */
+  const connectedCall = useCallStore(s => s.active !== null);
+  const callScreenVisible = useCallStore(s => s.screenVisible);
+  const incomingCall = useQuery(api.calls.incoming, token ? { token } : 'skip') as
+    | { _id: string }
+    | null
+    | undefined;
+  const ringingCall = incomingCall != null;
+
+  useEffect(() => {
+    callSignal.current = { connected: connectedCall, ringing: ringingCall, callScreenVisible };
+  }, [connectedCall, ringingCall, callScreenVisible]);
 
   /**
    * Mirrors the gate's own state for App.tsx's TalkBack isolation - see
@@ -498,15 +604,32 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
   /**
    * Starts a fresh lock episode.
    *
-   * Every path that decides "locked" goes through here so the per-episode state
-   * (whether the prompt has already fired, whether the PIN field is showing) can
-   * never drift out of sync with the locked flag - the auto-prompt is guarded by
-   * exactly one ref, and this is what resets it.
+   * Every path that decides "locked" goes through here, which is what keeps the
+   * episode id, the prompt record and the PIN field in step with the gate. The
+   * id moves and the record of what already happened does not: that asymmetry is
+   * the whole anti-loop mechanism, so it is stated rather than implied.
    */
   const armLock = useCallback(() => {
-    promptedThisEpisode.current = false;
+    episode.current += 1;
     setLocked(true);
     setShowPin(false);
+    setPin('');
+    setMessage(null);
+  }, []);
+
+  /**
+   * Brings the gate down without clearing the episode.
+   *
+   * Used when a call takes precedence. The gate was never satisfied by an unlock
+   * here - it was stood down - so the episode stays armed and a later excursion
+   * still re-locks. Releasing the gate must not look like unlocking it.
+   */
+  const releaseGate = useCallback(() => {
+    cancelBiometricPrompt();
+    promptInFlight.current = false;
+    suppressFailureCopy.current = true;
+    setPrompting(false);
+    setLocked(false);
     setPin('');
     setMessage(null);
   }, []);
@@ -569,11 +692,32 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
        */
       if (next === 'background') {
         backgroundedAt.current = Date.now();
+        appActive.current = false;
+        /**
+         * The prompt is allowed to background us. Showing the device-credential
+         * fallback launches a system activity, which stops ours, and some OEM
+         * builds do the same just to raise the fingerprint dialog.
+         *
+         * So the excursion is recorded as ours *before* the flag is cleared:
+         * clearing `promptInFlight` without this mark is precisely how the
+         * returning 'active' below reads as a fresh excursion and fires a second
+         * prompt over the first. Tearing the prompt down here as well is what
+         * keeps the in-flight flag from wedging on a prompt the OS dismissed
+         * without ever calling back - a promise that never settles is a lock
+         * screen nobody can leave.
+         */
+        if (promptInFlight.current) {
+          promptCausedBackground.current = true;
+          suppressFailureCopy.current = true;
+          cancelBiometricPrompt();
+          promptInFlight.current = false;
+        }
         return;
       }
       if (next !== 'active') {
         return;
       }
+      appActive.current = true;
 
       const leftAt = backgroundedAt.current;
       backgroundedAt.current = null;
@@ -581,19 +725,31 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
         return;
       }
 
-      // The prompt itself can dip the app out of foreground. Returning from it is
-      // not an excursion.
-      if (promptInFlight.current) {
+      /**
+       * Returning from the excursion our own prompt caused is not returning from
+       * an excursion. The episode stays exactly as it was: still locked, still
+       * holding its single spent prompt.
+       */
+      if (promptCausedBackground.current) {
+        promptCausedBackground.current = false;
         return;
       }
+
       /**
-       * Never cover a live call.
+       * Never come back to a lock screen over a call.
        *
-       * Backgrounding to answer the door and coming back to a lock screen over an
-       * active call would put a PIN pad between the user and the person they are
-       * talking to. Read-only use of the call store; nothing in it is modified.
+       * Two cases, and the second is the reported one. An active call is the
+       * long-standing rule. A call that is still *ringing* covers the resume that
+       * IS the answer: the user tapped Accept on the native ring activity, this
+       * activity is being brought forward to carry the call, and by the time the
+       * call screen reports itself active the resume decision has long since been
+       * made. Putting a PIN pad there is what the user reported as "it opens the
+       * app and asks me for my biometric pin" - a second unlock stacked on one
+       * they had just satisfied at the phone's own lock screen.
+       *
+       * Read-only use of the call store; nothing in it is modified.
        */
-      if (useCallStore.getState().active !== null) {
+      if (callInterruptsLock(callSignal.current)) {
         return;
       }
 
@@ -637,13 +793,38 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
 
   // ---------------------------------------------------------------- unlock
 
+  /**
+   * Presents the OS prompt, or does not - exactly once per lock episode.
+   *
+   * The claim is made *synchronously*, before the first `await`, which is the
+   * only place it can be made. Everything after this line can yield to the event
+   * loop, and anything that yields is a window in which a second caller - a
+   * re-render, the auto-prompt effect re-running, an `AppState` bounce - could
+   * otherwise get in.
+   */
   const runBiometric = useCallback(async () => {
     if (!biometricAvailable || promptInFlight.current) {
       return;
     }
+    if (lockoutUntil.current > Date.now()) {
+      return;
+    }
+    /**
+     * Belt to the braces in the auto-prompt effect below. `runBiometric` returns
+     * before claiming the episode, so a call arriving inside the settle window
+     * costs this episode its prompt rather than nothing at all - which is the
+     * honest reading: the prompt was offered and the call took the moment.
+     */
+    if (callInterruptsLock(callSignal.current)) {
+      presentedEpisode.current = episode.current;
+      setShowPin(true);
+      return;
+    }
+    presentedEpisode.current = episode.current;
     promptInFlight.current = true;
-    promptedThisEpisode.current = true;
+    suppressFailureCopy.current = false;
     setBusy(true);
+    setPrompting(true);
     try {
       const result = await authenticateWithBiometrics({
         title: `Unlock ${APP_NAME}`,
@@ -655,40 +836,121 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
         setPin('');
         return;
       }
-      // Anything else - a cancel, a lockout, a dismissal - lands on the PIN rather
-      // than re-presenting. Re-presenting automatically is how an app ends up
-      // arguing with the user.
+      /**
+       * Android's own backoff, honoured so the next episode does not open a
+       * prompt that can only fail. `BIOMETRIC_RETRY_COOLDOWN_MS` is the OS's own
+       * 30 seconds, not a number this app picked.
+       */
+      if (result.status === 'lockout') {
+        lockoutUntil.current = Date.now() + BIOMETRIC_RETRY_COOLDOWN_MS;
+      }
+      if (suppressFailureCopy.current) {
+        return;
+      }
+      /**
+       * Anything else - a cancel, a lockout, a dismissal, a prompt the OS
+       * refused to host - lands on the PIN pad, every time, with no second tap
+       * required. Re-presenting is how an app ends up arguing with the user, and
+       * is also what made this flow two steps: fall to the PIN, then press
+       * "Use biometrics", then press "Unlock".
+       */
       setShowPin(true);
-      setMessage({ tone: result.status === 'lockout' ? 'error' : 'info', text: describeBiometricFailure(result) });
+      /**
+       * `pinSet` is read from the store rather than closed over. The callback is
+       * memoised on `biometricAvailable` alone, so a captured `pinSet` is the
+       * value from whichever render happened to create it - and the copy would
+       * then promise a PIN pad for an install that has none.
+       */
+      setMessage(
+        describeBiometricFailure(result, { pinAvailable: useAppLock.getState().pinSet }),
+      );
     } finally {
       promptInFlight.current = false;
       setBusy(false);
+      setPrompting(false);
     }
   }, [biometricAvailable]);
 
   /**
-   * Auto-trigger, exactly once per lock episode.
+   * Auto-trigger. No button, no waiting for the user to ask.
    *
-   * If the OS refuses to show the prompt - no foreground activity, the activity
-   * is not resumed, a prompt is already up - the screen still renders with a
-   * visible Unlock control, so there is always something to press.
+   * Three things have to be true before this presents anything, and each one
+   * used to be a bug:
+   *
+   *   1. There is an enrolled strong biometric. Otherwise the PIN pad is the
+   *      screen, and this effect does nothing at all.
+   *   2. The app is in the foreground. The native module needs a RESUMED
+   *      `FragmentActivity` and rejects anything else; asking too early used to
+   *      produce "the screen changed before the fingerprint check could open" on
+   *      a cold start, which is the first half of the two-step unlock.
+   *   3. The episode has not spent its prompt yet. See `mayPresentPrompt`.
+   *
+   *   4. No call is ringing, being answered or live. A fingerprint dialog on top
+   *      of the ring the user is in the middle of answering is the second
+   *      complaint: "I accept it and it asks me for my biometric pin." When a
+   *      call is present the episode is marked as having spent its prompt and
+   *      the PIN pad is shown instead - never a dialog over a call.
+   *
+   * The delay below is the same idea as (2), one beat later. Android reports the
+   * activity resumed slightly before it is genuinely ready to host a dialog, so
+   * a prompt raised in the same tick as the resume is a coin flip. Nothing is
+   * exposed while the timer runs: the gate is already up and already opaque.
    */
   useEffect(() => {
-    if (!locked || recovered || promptedThisEpisode.current || !biometricAvailable) {
+    if (!locked || recovered || !biometricAvailable) {
       return;
     }
-    if (!pinUsable) {
-      setShowPin(false);
+    if (callInterruptsLock(callSignal.current)) {
+      presentedEpisode.current = episode.current;
+      if (pinUsable) {
+        setShowPin(true);
+      }
+      return;
     }
-    // Set before the call, not after: `runBiometric` is async, and a second pass
-    // through this effect while it is in flight must not present a second prompt.
-    promptedThisEpisode.current = true;
-    runBiometric();
-    // `promptedThisEpisode` is a ref and is deliberately absent from this list:
-    // reading it in a dependency array does not subscribe to anything, and
-    // including it would suggest a guarantee it cannot provide.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (
+      !mayPresentPrompt({
+        episode: episode.current,
+        presentedEpisode: presentedEpisode.current,
+        presenting: promptInFlight.current,
+        appActive: appActive.current,
+        cooldownRemainingMs: lockoutUntil.current - Date.now(),
+      })
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      // Re-checked at the moment of firing, not just when the timer was set: the
+      // episode can move underneath a pending timer, and a call can arrive inside
+      // the window. A stale check would present a prompt over either.
+      if (
+        mayPresentPrompt({
+          episode: episode.current,
+          presentedEpisode: presentedEpisode.current,
+          presenting: promptInFlight.current,
+          appActive: appActive.current,
+          cooldownRemainingMs: lockoutUntil.current - Date.now(),
+        })
+      ) {
+        void runBiometric();
+      }
+    }, AUTO_PROMPT_SETTLE_MS);
+    return () => clearTimeout(timer);
   }, [locked, recovered, biometricAvailable, pinUsable, runBiometric]);
+
+  /**
+   * A call that arrives while the gate is up takes the gate down.
+   *
+   * Only a call that has been *answered* does this. One that is merely ringing
+   * leaves the gate alone: the user accepts it from the native ring activity,
+   * which draws over this screen, and letting a ringing call switch the lock off
+   * would hand the conversation to anyone who can reach the user's handle.
+   */
+  useEffect(() => {
+    if (!locked || !callReleasesGate(callSignal.current)) {
+      return;
+    }
+    releaseGate();
+  }, [locked, connectedCall, callScreenVisible, releaseGate]);
 
   const shakeOnError = useCallback(() => {
     if (reduceMotion) {
@@ -791,6 +1053,8 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
     setBusy(false);
     cancelBiometricPrompt();
     promptInFlight.current = false;
+    suppressFailureCopy.current = true;
+    setPrompting(false);
 
     /**
      * Release the gate either way.
@@ -865,7 +1129,20 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
     outputRange: [-10, 10],
   });
 
-  const showPinField = showPin && pinUsable;
+  /**
+   * Whether the PIN pad is on screen.
+   *
+   * The `|| !biometricAvailable` half is load-bearing and was a real bug: nothing
+   * ever set `showPin` except the biometric failure path and the "Use PIN"
+   * button, and *both* require an available biometric. On a device with no
+   * sensor, nothing enrolled, or a manifest that lost `USE_BIOMETRIC`, the gate
+   * came up with no PIN field, no "Use PIN" button, and only "Forgot your PIN?"
+   * - an install nobody could get into except by signing out.
+   *
+   * The PIN pad is the floor. Whenever there is no prompt to present, the floor
+   * is what shows.
+   */
+  const showPinField = pinUsable && (showPin || !biometricAvailable);
 
   /**
    * Errors get full-contrast on-surface, informational text gets the dimmer
@@ -911,10 +1188,25 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
           <Text variant="headlineSmall" style={{ color: colors.onSurface }}>
             {APP_NAME} is locked
           </Text>
-          <Text variant="bodyMedium" style={[styles.subtitle, { color: colors.onSurfaceVariant }]}>
+          {/*
+            One sentence, and it always names what is actually going to happen.
+            While a prompt is up the screen says so, because a screen-reader user
+            is otherwise told nothing at all when a system dialog they cannot see
+            took focus - `polite` rather than `assertive` because this is not an
+            error, and interrupting for good news is its own kind of wrong.
+          */}
+          <Text
+            variant="bodyMedium"
+            accessibilityLiveRegion="polite"
+            style={[styles.subtitle, { color: colors.onSurfaceVariant }]}
+          >
             {recoveryOnly
               ? 'This device cannot verify who you are. Sign out to get back in.'
-              : 'Confirm it is you to continue.'}
+              : prompting
+                ? 'Waiting for your fingerprint…'
+                : showPinField
+                  ? 'Enter your PIN to continue.'
+                  : 'Confirm it is you to continue.'}
           </Text>
         </View>
 
@@ -950,7 +1242,10 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
               value={pin}
               onChange={setPin}
               onSubmit={submitPin}
-              autoFocus={!biometricAvailable}
+              // Never steal focus while the OS prompt is up: on Android the two
+              // fight, and the number pad appearing under a fingerprint dialog is
+              // how the prompt gets dismissed by a stray tap.
+              autoFocus={!prompting}
               disabled={busy || cooldownRemaining > 0}
             />
             <Button
@@ -969,21 +1264,21 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
         ) : null}
 
         <View style={styles.actions}>
-          {biometricAvailable ? (
-            <Button
-              mode="contained"
-              onPress={() => void runBiometric()}
-              disabled={busy}
-              loading={busy && showPinField === false}
-              accessibilityRole="button"
-              accessibilityLabel="Unlock with biometrics"
-              accessibilityHint="Opens the system fingerprint or face prompt"
-              accessibilityState={{ disabled: busy, busy }}
-            >
-              Unlock
-            </Button>
-          ) : null}
+          {/*
+            THE ENTIRE MANUAL SURFACE, and it is one line of text.
 
+            Both "Unlock with biometrics" and "Use biometrics instead" are gone.
+            The first duplicated a button the OS had already drawn on top of it -
+            that is the two-step unlock this screen used to have. The second was
+            worse: it put a PIN entry in front of the prompt, so a user who
+            dismissed the prompt had to press "Use biometrics" and *then* "Unlock"
+            to get back to where they started.
+
+            What is left is the escape in the other direction, for the one case
+            the automatic path cannot cover: the prompt never appeared. It is
+            deliberately small and deliberately text-mode, because it is the
+            fallback and not the front door.
+          */}
           {biometricAvailable && pinUsable && !showPinField ? (
             <Button
               mode="text"
@@ -994,26 +1289,10 @@ const recoveryOnly = !pinUsable && !biometricAvailable;
               disabled={busy}
               accessibilityRole="button"
               accessibilityLabel="Use PIN instead"
+              accessibilityHint="Opens the app lock PIN keypad, without using your fingerprint"
               accessibilityState={{ disabled: busy }}
             >
               Use PIN
-            </Button>
-          ) : null}
-
-          {biometricAvailable && pinUsable && showPinField ? (
-            <Button
-              mode="text"
-              onPress={() => {
-                setShowPin(false);
-                setPin('');
-                setMessage(null);
-              }}
-              disabled={busy}
-              accessibilityRole="button"
-              accessibilityLabel="Use biometrics instead"
-              accessibilityState={{ disabled: busy }}
-            >
-              Use biometrics
             </Button>
           ) : null}
 

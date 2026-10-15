@@ -104,13 +104,13 @@ const ConversationsList = ({ navigation }: any) => {
        * (Calls names itself once, in one place).
        *
        * The profile avatar is gone rather than moved. Profile is a bottom tab, so the
-       * avatar in this header was a second, fatter route to a screen one tap away —
-       * and it was the only thing making the header a three-element row.
-       *
-       * That leaves a title and the one action worth having. The title takes `flex: 1`
-       * so it stays left-aligned against the 16pt gutter shared by every other screen
-       * header, and the filled "+" carries the right-hand weight on its own — the
-       * WhatsApp arrangement, where the only two things in the bar are what it is and
+* avatar in this header was a second, fatter route to a screen one tap away, and
+        * it was the only thing making the header a three-element row.
+        *
+        * That leaves a title and the one action worth having. The title takes `flex: 1`
+        * so it stays left-aligned against the 16pt gutter shared by every other screen
+        * header, and the filled "+" carries the right-hand weight on its own. That is
+        * the WhatsApp arrangement, where the only two things in the bar are what it is and
        * what you can do next.
        */}
       <View style={styles.header}>

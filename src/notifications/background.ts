@@ -4,11 +4,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import notifee, { EventType } from '@notifee/react-native';
 import { api } from '../../convex/_generated/api';
 import {
-  dismissCallNotification,
+  cancelAllCallNotifications,
   showIncomingCallNotification,
 } from './callNotifications';
 import {
   handleOngoingCallAction,
+  hideOngoingCallNotification,
   ONGOING_ACTION_HANGUP,
   ONGOING_ACTION_MUTE,
   ONGOING_ACTION_SPEAKER,
@@ -77,6 +78,13 @@ export async function handleDataMessage(
   const callAction = typeof data.callAction === 'string' ? data.callAction : '';
   if (callAction === 'cancelled' || callAction === 'ended') {
     await teardownRinging(data.callId);
+    // The ongoing-call notification is the half that outlived calls. It is
+    // `ongoing: true` with no `timeoutAfter`, so nothing but an explicit cancel
+    // ever removes it, and this is the only push that arrives while the app is in
+    // the background - at which point React has unmounted the call screen, which
+    // is the only other thing that used to hide it. Without this the connected-call
+    // entry stayed in the shade after the other side hung up.
+    await hideOngoingCallNotification(data.callId);
     return;
   }
 
@@ -100,15 +108,25 @@ export async function handleDataMessage(
  * push that is delivered twice, from a decline, and from a local accept/decline in
  * the app.
  *
+ * Cancels the ring AND the ongoing notification for this call (see
+ * [cancelAllCallNotifications]), so it is safe to call on every terminal state and
+ * correct on all of them.
+ *
  * `dismissActivity` is false when the ring screen has already finished itself
  * (the user just tapped its own Accept or Decline button), or when the call was
  * handled while the app was foregrounded, where there is no ring activity.
+ *
+ * Callers must invoke this from a `finally`, not only on the success path. This
+ * function used to sit after the network mutation, so a mutation that threw - a
+ * dropped connection, or `accept`'s "You are already on another call" - skipped the
+ * teardown entirely and left a HIGH-importance looping notification alerting in the
+ * shade for the rest of its window. A failed answer still ends the ring.
  */
 export async function teardownRinging(
   callId: string,
   dismissActivity = true,
 ): Promise<void> {
-  await dismissCallNotification(callId);
+  await cancelAllCallNotifications(callId);
   try {
     await AsyncStorage.removeItem(PENDING_CALL_KEY);
   } catch {}
@@ -256,7 +274,7 @@ export async function handleNotifeeBackgroundEvent(event: any): Promise<void> {
       action: 'accept',
       at: Date.now(),
     });
-    await dismissCallNotification(callId);
+    await cancelAllCallNotifications(callId);
     await openApp();
   }
 }

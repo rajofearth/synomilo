@@ -45,7 +45,7 @@ const PENDING_REVOCATION_KEY = "synomilo.convex.pendingRevocation";
 /**
  * `sessions` has no `expiresAt` and nothing ever sweeps the table
  * (`convex/schema.ts:15-22`), so a token minted once stays valid for the lifetime of the
- * deployment. That is a server-side gap and convex/ is not this module's to change — but
+ * deployment. That is a server-side gap and convex/ is not this module's to change, but
  * the client can still refuse to keep handing it out forever.
  *
  * 30 days is long enough that nobody is logged out mid-workflow and short enough that a
@@ -112,7 +112,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
    * validated yet.
    *
    * Without this, `signIn` flips `!!token` from false to true, `isLoading` flips to true,
-   * and App.tsx tears down the entire tree — NavigationContainer included — while the
+   * and App.tsx tears down the entire tree (NavigationContainer included) while the
    * login handler is still awaiting. The subsequent `reset()` then lands on an unmounted
    * ref and the app lands on a blank screen. Trusting the token we just obtained from the
    * server keeps the tree mounted across the hand-off.
@@ -129,8 +129,8 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
    *
    * Sessions have no server-side TTL, so if the device is offline when the user signs out
    * the `sessions` row survives and that token stays valid FOREVER. Dropping it on the
-   * floor is the bug; queueing it is the fix — the next time a mutation succeeds, the
-   * revocation lands. Local state is cleared either way: an unusable device must still be
+   * floor is the bug; queueing it is the fix, because the next time a mutation succeeds,
+   * the revocation lands. Local state is cleared either way: an unusable device must still be
    * able to sign out.
    */
   const flushPendingRevocations = useCallback(async () => {
@@ -147,7 +147,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
       await logoutMutation({ token: pending });
       await removePersisted([PENDING_REVOCATION_KEY]).catch(() => {});
     } catch {
-      // Still offline — retried on the next successful call.
+      // Still offline, retried on the next successful call.
     }
   }, [logoutMutation]);
 
@@ -218,8 +218,9 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [me, flushPendingRevocations]);
 
   /**
-   * The server rejected the stored token — the row was deleted, or logout happened on
-   * another device. Wipe it locally and tell the user why they are back at the login form.
+   * The server rejected the stored token, either because the row was deleted or because
+   * logout happened on another device. Wipe it locally and tell the user why they are back
+   * at the login form.
    */
   useEffect(() => {
     if (token && me === null) {
@@ -232,7 +233,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
 
   /**
    * `me` stuck at `undefined` means Convex has not answered. Past the timeout the token is
-   * treated as unusable and the user is asked to sign in again — fail closed, rather than
+   * treated as unusable and the user is asked to sign in again. Fail closed, rather than
    * sitting on a blank screen or worse, rendering authenticated UI against a session that
    * cannot be verified.
    */

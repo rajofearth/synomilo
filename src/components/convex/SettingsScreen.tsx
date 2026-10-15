@@ -38,15 +38,16 @@ const EMAIL_URL = 'mailto:rajofearth@proton.me';
  * the maintainer's email
  *   - sign out, behind a confirm
  *
- * It also had a hardcoded `#E5484D` on the sign-out row — the one non-monochrome pixel
- * in a black & white app, and invisible-as-a-colour on the dark scheme where the same
- * hex reads as a dim maroon. Sign out is destructive by *position*, not by hue, so it is
- * now expressed with the `error` role from the monochrome palette.
+ * It also had a hardcoded `#E5484D` on the sign-out row. That was the one
+ * non-monochrome pixel in a black & white app, and it was invisible-as-a-colour on
+ * the dark scheme where the same hex reads as a dim maroon. Sign out is destructive
+ * by *position*, not by hue, so it is now expressed with the `error` role from the
+ * monochrome palette.
  *
  * The version/platform and the GitHub / source / email rows used to live on the Profile
  * screen, which is about the person and nothing else. They came here rather than being
- * dropped: the version was already on this screen (it was rendered twice across the app
- * — see `AppConstants.versionNumber`'s comment), so only the platform row is new.
+ * dropped: the version was already on this screen (it was rendered twice across the app;
+ * see `AppConstants.versionNumber`'s comment), so only the platform row is new.
  */
 
 /**
@@ -295,15 +296,15 @@ const SettingsScreen = ({ navigation }: any) => {
 
   const biometricLabel = useMemo(() => {
     if (lockAvailability?.available) {
-      return 'On — biometrics, with PIN fallback';
+      return 'On: biometrics, with PIN fallback';
     }
     if (lockAvailability?.reason === 'noneEnrolled') {
-      return 'On — PIN only (no biometrics enrolled)';
+      return 'On: PIN only (no biometrics enrolled)';
     }
     if (lockAvailability?.reason === 'permissionMissing') {
-      return 'On — PIN only (biometrics unavailable)';
+      return 'On: PIN only (biometrics unavailable)';
     }
-    return 'On — PIN only (biometrics unavailable)';
+    return 'On: PIN only (biometrics unavailable)';
   }, [lockAvailability]);
 
   const lockDescription = (() => {
@@ -314,7 +315,7 @@ const SettingsScreen = ({ navigation }: any) => {
       return 'Checking…';
     }
     if (lockStatus === 'storeBroken') {
-      return 'On — secure storage unreadable, reset required';
+      return 'On: secure storage unreadable, reset required';
     }
     return lockEnabled ? biometricLabel : 'Off';
   })();
@@ -582,7 +583,7 @@ const SettingsScreen = ({ navigation }: any) => {
 
             <Text variant="bodySmall" style={[styles.lockNote, { color: colors.onSurfaceVariant }]}>
               Two wrong PINs are free; after that the app waits 30 seconds, doubling up to
-              15 minutes. It never locks you out permanently — if you forget the PIN, the
+              15 minutes. It never locks you out permanently. If you forget the PIN, the
               lock screen signs you out and erases it so you can sign in again.
               {lockBackend ? ` Storage: ${lockBackend}.` : ''}
             </Text>

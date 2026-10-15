@@ -13,7 +13,7 @@ export const AppConstants = {
 
 /**
  * Route names. Every key here maps to a registered `<Stack.Screen>` that has at least
- * one live `navigate()` caller — see `RootStackParamList`, which is the type-level
+ * one live `navigate()` caller: see `RootStackParamList`, which is the type-level
  * counterpart. The UIKit-era keys (CONVERSATION, CREATE_CONVERSATION, THREAD_VIEW,
  * SEARCH_MESSAGES, SAVED_MESSAGES, PINNED_MESSAGES, USER_INFO, GROUP_INFO, ADD_MEMBER,
  * TRANSFER_OWNERSHIP, BANNED_MEMBER, VIEW_MEMBER, QR_SCREEN, AI_AGENTS, CALL_DETAILS,

@@ -3,6 +3,7 @@ package com.rajofearth.synomilo
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.RingtoneManager
 import android.os.Build
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -76,6 +77,32 @@ class CallAudioModule(reactContext: ReactApplicationContext) :
             promise.resolve(true)
         } catch (error: Throwable) {
             promise.resolve(false)
+        }
+    }
+
+    /**
+     * The device's own default ringtone, as a URI string - or null when the user
+     * has set their ringtone to None.
+     *
+     * Exists because `android.app.NotificationChannel.setSound` freezes whatever
+     * URI it is handed, so the channel has to be BORN with the right one: there is
+     * no way to discover "None" later and retune a channel that already exists.
+     * Notifee cannot answer this question itself - its own resolution order
+     * (verified against the bundled core AAR, `n.o.t.i.f.e.e.r#c`) is "contains
+     * `://`" -> `Uri.parse` verbatim, then the literal `default` ->
+     * `RingtoneManager.getDefaultUri(TYPE_NOTIFICATION)`, which is the
+     * *notification* sound, not the ringtone. No string reaches TYPE_RINGTONE.
+     *
+     * So JS asks here, and falls back to a bundled clip when this returns null.
+     */
+    @ReactMethod
+    fun getDefaultRingtoneUri(promise: Promise) {
+        try {
+            promise.resolve(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)?.toString()
+            )
+        } catch (error: Throwable) {
+            promise.resolve(null)
         }
     }
 }

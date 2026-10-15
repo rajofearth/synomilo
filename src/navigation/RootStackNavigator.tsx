@@ -47,7 +47,7 @@ const RootStackNavigator = ({ isLoggedIn }: Props) => {
   /**
    * Catch-all for "the session went away while the navigator was already mounted".
    *
-   * `initialRouteName` is read ONCE, at mount, so it cannot react to logout — and the user
+   * `initialRouteName` is read ONCE, at mount, so it cannot react to logout, and the user
    * is stranded in authenticated UI with no session, which is the one-way-door bug. Every
    * path that drops the Convex session converges here: an explicit sign-out, a token the
    * server rejects mid-session, an expired session, an unvalidatable token.

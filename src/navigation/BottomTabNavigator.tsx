@@ -35,7 +35,7 @@ const icons: Record<keyof BottomTabParamList, TabIconName> = {
  *
  * This used to be the UIKit's `t(route.name.toUpperCase())` against the
  * UIKit's localisation bundle. That bundle has `CHATS` and `CALLS` but no `PROFILE`, and
- * its lookup returns the key itself on a miss — so adding Profile as a tab rendered a
+ * its lookup returns the key itself on a miss, so adding Profile as a tab rendered a
  * shouted `PROFILE` above two sentence-case siblings.
  */
 const labels: Record<keyof BottomTabParamList, string> = {
@@ -100,7 +100,7 @@ const TabIcon = ({ focused, name }: TabIconProps) => {
  * This used to read `settings.layout.tabs` out of the no-code config store and map it
  * over a `TAB_COMPONENTS` record, silently dropping any key with no component behind
  * it. In practice the store shipped `groups`, which had no entry, so the
- * "configurable" tab bar was a fixed three-tab bar wearing a filter as a disguise —
+ * "configurable" tab bar was a fixed three-tab bar wearing a filter as a disguise,
  * and the filter was the only thing the config could actually influence. `Groups` and
  * `Users` are gone now (groups are gone from the app; the user directory became the
  * Add Contact screen and Profile became a tab), so the store lookup is gone with them.

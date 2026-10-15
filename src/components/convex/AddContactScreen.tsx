@@ -47,7 +47,7 @@ const normalize = (value: string): string => value.trim().toLowerCase();
  *
  *   `[CONVEX Q(users:findByUsername)] <server error message>\n  Called by client`
  *
- * — and that is a plain `Error`, so it has no `ConvexError.data` to unwrap. The whole
+ * and that is a plain `Error`, so it has no `ConvexError.data` to unwrap. The whole
  * thing is about 120 characters, which is inside `convexErrorMessage`'s 220-character
  * pass-through, so the helper handed it back verbatim and the screen rendered the
  * Convex plumbing in full underneath the search field.
@@ -73,8 +73,8 @@ const looksLikeTransportFailure = (text: string): boolean =>
 /**
  * The last gate before a string is rendered.
  *
- * `convexErrorMessage` still does the reading — it is what recovers the server's own
- * message out of a `ConvexError` — but anything that still reads as a stack, a
+ * `convexErrorMessage` still does the reading, because it is what recovers the server's
+ * own message out of a `ConvexError`, but anything that still reads as a stack, a
  * `[CONVEX …]` prefix or a node_modules path is replaced with the caller's own fallback,
  * as is transport wording. The screen can therefore never show copy that is about Convex
  * or about sockets rather than about the person who is using it.
@@ -105,7 +105,7 @@ const COPY = {
  * The single entry point to starting a conversation.
  *
  * Replaces the old `Users` tab (a full directory with a client-side filter) and the
- * `Groups` FAB. Both are gone; this is the only way in, by design — an address book
+ * `Groups` FAB. Both are gone; this is the only way in, by design. An address book
  * is a privacy problem and a navigation problem, and the app only needs to answer
  * "do I know this username?".
  *
@@ -215,7 +215,7 @@ const AddContactScreen = ({ navigation }: any) => {
   /**
    * `submit`/`openChat` catch everything they can throw, so these two handlers should
    * be unreachable. They exist because an `async` callback handed to an event prop
-   * still produces a promise, and an unhandled rejection on a Pressable is a crash —
+   * still produces a promise, and an unhandled rejection on a Pressable is a crash,
    * which is exactly the silent-failure mode this screen must not have. If one ever
    * does fire it becomes a visible inline message instead of a red box.
    */

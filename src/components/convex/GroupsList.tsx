@@ -43,7 +43,7 @@ type UserRow = {
  * and `dark` slots), so it did not follow the OS colour scheme. Paper's theme is rebuilt
  * on every `useColorScheme()` change.
  *
- * Three hardcoded whites came out with it — `#FFFFFF` on the header "+", on the member
+ * Three hardcoded whites came out with it: `#FFFFFF` on the header "+", on the member
  * checkmark, and `#fff` on the create-group button text.
  */
 const GroupsList = ({ navigation }: any) => {

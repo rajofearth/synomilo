@@ -104,9 +104,22 @@ export type BiometricResult = {
   reason?: BiometricReason;
   /** `BiometricPrompt.ERROR_*` on `error`/`lockout`/`cancelled`, `BiometricManager` status on `unavailable`. */
   errorCode?: number;
-  /** OS-supplied text. Never displayed verbatim - see `describeBiometricFailure`. */
+  /**
+   * Diagnostic only, never displayed.
+   *
+   * Two different things land here and the caller cannot tell them apart, which is
+   * exactly why it must not be rendered: an OS-supplied `errString` from the prompt,
+   * and - when the failure happened before the prompt could be built at all - the
+   * bridge rejection code (`E_ACTIVITY_NOT_RESUMED`, `E_PROMPT_IN_FLIGHT`, ...).
+   * OEM translations of the former are frequently alarming ("Biometric authentication
+   * error"); the latter is the one genuinely diagnostic signal, so
+   * `describeBiometricFailure` branches on it by value.
+   */
   message?: string;
 };
+
+/** How loudly a failure line is drawn. Severity is contrast, never hue. */
+export type FailureTone = 'info' | 'error';
 
 /**
  * Promise-returning half of the native module.
@@ -308,24 +321,171 @@ export function biometricFailed(result: BiometricResult): boolean {
   return result.status !== 'success';
 }
 
+/** A failure line for the lock screen: what happened, and what to do next. */
+export type BiometricFailureCopy = {
+  tone: FailureTone;
+  text: string;
+};
+
 /**
- * Human-readable text for a failed attempt.
+ * What the caller is told after a failed attempt.
  *
- * `result.message` is deliberately not used: it is OS-supplied and can be empty or
- * alarming depending on the OEM's translation. The reason codes are stable and
- * translatable.
+ * ------------------------------------------------------------------------
+ * WHY THIS IS A TABLE AND NOT A `switch` WITH FOUR CASES
+ * ------------------------------------------------------------------------
+ * The old version had four branches and two of them produced the bare word
+ * "failed" - "Unlock failed. Use your PIN." - which tells the user nothing they
+ * can act on and reads as the app having broken. Every outcome this module can
+ * produce has a *cause the user could name*: the sensor is busy, nothing is
+ * enrolled, the screen changed before the prompt could open, Android has locked
+ * biometrics after too many tries. Those get their own sentence, and every one of
+ * them ends with the single next action that actually works.
+ *
+ * The second half of the rule is the tail. `pinAvailable` decides what the user
+ * is pointed at, and it is always the same thing that is actually on screen: the
+ * PIN pad, or - on the one install with no PIN to fall back to - the sign-out and
+ * reset control. There is no state in which the copy names a button the screen
+ * is not showing.
+ *
+ * `result.message` is deliberately never rendered. See `BiometricResult.message`.
  */
-export function describeBiometricFailure(result: BiometricResult): string {
-  switch (result.status) {
-    case 'lockout':
-      // Too many rejected attempts at the OS level. The OS will not re-prompt for
-      // a while; the PIN is the only route, and it is rate-limited independently.
-      return 'Biometrics are temporarily locked. Use your PIN.';
-    case 'unavailable':
-      return 'Biometrics are not available on this device. Use your PIN.';
-    case 'cancelled':
-      return 'Unlock cancelled.';
+export function describeBiometricFailure(
+  result: BiometricResult,
+  options: { pinAvailable: boolean },
+): BiometricFailureCopy {
+  const next = options.pinAvailable
+    ? 'Enter your PIN below to unlock.'
+    : 'Use the sign-out and reset option below to get back in.';
+
+  /**
+   * Failures raised before the prompt was ever built. These arrive as
+   * `{ status: 'unavailable', reason: 'unknown', message: <bridge code> }`, and the
+   * code is the only thing that distinguishes "your screen changed underneath me"
+   * from "something is wrong with this build". Treating them all as one generic
+   * "not available" is what produced the unhelpful copy in the first place.
+   */
+  switch (result.message) {
+    case 'E_ACTIVITY_NOT_RESUMED':
+      return {
+        tone: 'info',
+        text: `The screen was still opening when the fingerprint check was due to appear. ${next}`,
+      };
+    case 'E_NO_ACTIVITY':
+    case 'E_ACTIVITY_GONE':
+      return {
+        tone: 'info',
+        text: `The screen changed before the fingerprint check could open. ${next}`,
+      };
+    case 'E_PROMPT_IN_FLIGHT':
+      return {
+        tone: 'info',
+        text: `A fingerprint check was already open, so a second one was not started. ${next}`,
+      };
+    case 'E_NOT_FRAGMENT_ACTIVITY':
+      return {
+        tone: 'error',
+        text: `This screen cannot host the fingerprint check. ${next}`,
+      };
+    case 'E_PERMISSION_MISSING':
+      return {
+        tone: 'error',
+        text: `This version of the app is not permitted to use fingerprint unlock. ${next}`,
+      };
+    case 'E_BIOMETRIC_UNAVAILABLE':
+      return {
+        tone: 'info',
+        text: `The fingerprint service could not be reached this time. ${next}`,
+      };
     default:
-      return 'Unlock failed. Use your PIN.';
+      break;
   }
+
+  if (result.status === 'lockout') {
+    return {
+      tone: 'error',
+      // Android's own backoff. Stating that it lifts by itself is the actionable
+      // half: without it, "locked" reads as "broken" and the user signs out.
+      text: `Android has locked fingerprint and face unlock after too many attempts. It clears by itself after a short wait - ${next.toLowerCase()}`,
+    };
+  }
+
+  if (result.status === 'cancelled') {
+    return {
+      tone: 'info',
+      text: `The fingerprint check was dismissed before it finished. ${next}`,
+    };
+  }
+
+  if (result.status === 'unavailable') {
+    return { tone: 'info', text: `${unavailableReasonCopy(result.reason)} ${next}` };
+  }
+
+  // `status === 'error'`: the prompt opened and something ended it abnormally.
+  if (result.errorCode === BIOMETRIC_ERROR.TIMEOUT) {
+    return {
+      tone: 'info',
+      text: `The fingerprint check timed out before a finger was read. ${next}`,
+    };
+  }
+
+  return {
+    tone: 'error',
+    text: `The fingerprint check stopped before it could confirm anything. ${next}`,
+  };
+}
+
+/**
+ * Why biometrics are not usable, from `getAvailability()`'s own vocabulary.
+ *
+ * "Not available" is the answer almost nobody can act on. Each of these names the
+ * specific thing that is missing or wrong and, where one exists, the specific place
+ * to fix it.
+ */
+const unavailableReasonCopy = (reason: BiometricReason | undefined): string => {
+  switch (reason) {
+    case 'noHardware':
+      return 'This device has no fingerprint reader or face unlock.';
+    case 'noneEnrolled':
+      return 'No fingerprint or face is set up on this device. Add one in Android Settings, or';
+    case 'hwUnavailable':
+      return 'The fingerprint sensor is busy, which usually means it is still waking after a restart.';
+    case 'unsupported':
+      return 'This device does not support fingerprint unlock.';
+    case 'permissionMissing':
+      return 'This version of the app is not permitted to use fingerprint unlock.';
+    default:
+      return 'Fingerprint unlock is not available right now.';
+  }
+};
+
+/**
+ * How long the app should wait before offering the prompt again after an OS
+ * lockout, in milliseconds.
+ *
+ * The OS's own backoff for `ERROR_LOCKOUT` is 30 seconds. Offering a "try again"
+ * control before then produces a prompt that can only fail, so the control is
+ * disabled for this long and says so.
+ */
+export const BIOMETRIC_RETRY_COOLDOWN_MS = 30_000;
+
+/**
+ * Whether a "try fingerprint again" control should be offered at all right now.
+ *
+ * True only after a genuine attempt. Before the first prompt of an episode there
+ * is nothing to retry - the prompt is being presented automatically - and offering
+ * a button that merely re-runs the automatic path is the two-step affordance this
+ * flow exists to remove.
+ */
+export function canRetryBiometric(args: {
+  attempted: boolean;
+  presenting: boolean;
+  cooldownRemainingMs: number;
+  lockoutCooldownRemainingMs: number;
+}): boolean {
+  return (
+    args.attempted &&
+    !args.presenting &&
+    args.cooldownRemainingMs <= 0 &&
+    args.lockoutCooldownRemainingMs <= 0
+  );
 }

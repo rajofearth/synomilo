@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.service.notification.StatusBarNotification
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -62,6 +63,30 @@ import androidx.core.content.ContextCompat
  * file uses the framework `Button` widget: its default background, its all-caps label
  * and its elevation are what made the previous version of this screen read as a
  * system dialog rather than as the app.
+ *
+ * ## This screen makes no sound, ever
+ *
+ * There is no MediaPlayer, no Ringtone, no ToneGenerator here - and that is the
+ * point, not an omission. An incoming call has exactly ONE sound source: the
+ * notification channel (`incoming_call_v4`, src/notifications/callNotifications.ts).
+ * A second source is how a call ends up playing two tones at once, or the dial
+ * tone, or nothing but one of the two. This class is presentation only.
+ *
+ * ## What this class DOES own: ending the ring
+ *
+ * Because it is `noHistory`, its screen goes away without JS being told, and
+ * `App.tsx` deliberately does NOT cancel the ringing notification when the
+ * full-screen intent is what is handling the press (it returns early, because this
+ * screen still has to read the payload out of the posted notification). So the
+ * exit paths that reach no JS at all - the ring window expiring, the back gesture,
+ * `resolve()` losing the race to a terminal push - used to leave a HIGH-importance
+ * `loopSound` notification alerting in the shade until its own `timeoutAfter`
+ * expired. That is the reported "alerting notification that does not go away".
+ *
+ * [onDestroy] therefore cancels every posted ringing notification, which makes this
+ * class the single native owner of "the ring UI is gone, stop alerting". It cancels
+ * by the exact (tag, id) pair Notifee posted, read back off the live
+ * StatusBarNotification, rather than by recomputing Notifee's internal id derivation.
  */
 class IncomingCallActivity : Activity() {
 
@@ -152,7 +177,45 @@ class IncomingCallActivity : Activity() {
         pulse?.cancel()
         pulse = null
         handler.removeCallbacks(autoDismiss)
+        // `isFinishing` guards the transient destroy (and would guard a
+        // configuration change, though `screenOrientation` is pinned so there
+        // should not be one). A finishing ring screen means nobody is answering
+        // this call from here, so the notification's insistent loop must stop.
+        // This runs on accept and decline too, where it is redundant with the JS
+        // teardown and therefore harmless - and on the accept path it is actually
+        // load-bearing, because it stops the ring while `calls.accept` is still in
+        // flight.
+        if (isFinishing) {
+            cancelRingingNotifications()
+        }
         super.onDestroy()
+    }
+
+    /**
+     * Cancels every posted ringing notification, for any call.
+     *
+     * Matched on `data.type == "call"` - the same identifier [liveRingPayload] uses -
+     * and cancelled with the exact `(tag, id)` pair that is currently on screen.
+     * Recomputing Notifee's internal id from the string id is what would make this
+     * silently miss; reading it back cannot.
+     */
+    private fun cancelRingingNotifications() {
+        try {
+            val manager = getSystemService(NotificationManager::class.java) ?: return
+            manager.activeNotifications
+                .filter { isRingPayload(it) }
+                .forEach { manager.cancel(it.tag, it.id) }
+        } catch (error: Throwable) {
+            // Best effort. The notification also carries `timeoutAfter`, so a
+            // failure here degrades to "it goes away on its own shortly", never to
+            // "it alerts forever".
+        }
+    }
+
+    private fun isRingPayload(sbn: StatusBarNotification): Boolean {
+        val extras = sbn.notification?.extras ?: return false
+        val data = extras.getBundle("data") ?: extras
+        return data.getString("type") == CALL_DATA_TYPE
     }
 
     /**

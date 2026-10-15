@@ -67,10 +67,6 @@ const IncomingCallOverlay: React.FC = () => {
     setBusy(true);
     try {
       await acceptCall({ token, callId: incoming._id as any });
-      // `dismissActivity: false` - there is no ring activity over a foreground app.
-      // Everything a ring puts up comes down here: notification, deferred accept,
-      // ring screen.
-      await teardownRinging(incoming._id, false);
       navigate('CallScreen', {
         callId: incoming._id,
         type: incoming.type,
@@ -83,6 +79,17 @@ const IncomingCallOverlay: React.FC = () => {
         convexErrorMessage(error, 'The call may have ended.'),
       );
     } finally {
+      // `finally`, not the success path. The teardown used to sit after
+      // `await acceptCall(...)`, so a mutation that threw - a dropped connection, or
+      // accept's "You are already on another call" - jumped straight to `catch` and
+      // left the ringing notification alive and looping. `accept` throws for reasons
+      // that have nothing to do with whether the user answered, and either way the
+      // ringing UI is gone: the user made a decision. The call itself is already
+      // terminal in the server's view in most of these cases.
+      //
+      // `dismissActivity: false` - there is no ring activity over a foreground app.
+      // Everything a ring puts up comes down here: notification, deferred accept.
+      await teardownRinging(incoming._id, false).catch(() => {});
       setBusy(false);
     }
   }, [token, incoming, busy, acceptCall]);
@@ -94,8 +101,13 @@ const IncomingCallOverlay: React.FC = () => {
     setBusy(true);
     try {
       await rejectCall({ token, callId: incoming._id as any });
-      await teardownRinging(incoming._id, false);
-    } catch {} finally {
+    } catch {
+      // Swallowed, as before: declining is always allowed, and a rejected mutation
+      // means the call was already gone.
+    } finally {
+      // Same reason as `accept`: the ring must come down whatever the server says.
+      // `catch {}` here used to swallow the mutation error *and* skip this line.
+      await teardownRinging(incoming._id, false).catch(() => {});
       setBusy(false);
     }
   }, [token, incoming, busy, rejectCall]);

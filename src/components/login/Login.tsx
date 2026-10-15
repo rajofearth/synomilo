@@ -40,7 +40,7 @@ const Login: React.FC = () => {
   const loginMutation = useMutation(api.auth.login);
 
   /**
-   * The button is disabled while `isLoading`, but the keyboard's "Go" action is not — and
+   * The button is disabled while `isLoading`, but the keyboard's "Go" action is not, and
    * `isLoading` read from the render closure is stale for the whole duration of the
    * mutation, so two quick "Go" presses both pass the guard. Every successful login mints
    * a NEW `sessions` row server-side, and nothing ever expires those rows, so each
@@ -298,7 +298,7 @@ const Login: React.FC = () => {
 
         {/**
          * Inside the KeyboardAvoidingView on purpose. As a sibling it anchored to the
-         * bottom of the full-height window, and iOS has no `adjustResize` — only
+         * bottom of the full-height window, and iOS has no `adjustResize`, only
          * `behavior="padding"`, which does not resize the parent. The user submits with the
          * keyboard up, so "Incorrect password. Try again." rendered behind the keyboard
          * and read as a silently failing login.

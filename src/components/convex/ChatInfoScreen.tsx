@@ -62,7 +62,7 @@ const mimeIcon = (mime: string | null): string =>
  *
  * This screen used to mix two themes on purpose and that is what stopped it following
  * the device: the legacy UIKit `useTheme()` supplied `color.*` and
- * `typography.*`, while Paper's supplied `colors.*`, and the UIKit palette is frozen —
+ * `typography.*`, while Paper's supplied `colors.*`, and the UIKit palette is frozen:
  * `App.tsx` builds one palette and hands the same object to the UIKit's `light` and
  * `dark` slots, so the two never differ no matter what the OS reports. Paper's theme is
  * rebuilt on every `useColorScheme()` change. Paper `Text variant`s replace the UIKit
