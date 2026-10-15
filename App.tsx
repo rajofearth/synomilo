@@ -4,6 +4,7 @@ import { View, AppState, NativeModules } from 'react-native';
 import { ConvexProvider, useMutation, useQuery } from 'convex/react';
 import { Button, Dialog, PaperProvider, Portal, Text, useTheme } from 'react-native-paper';
 import { useAppPaperTheme } from './src/theme/useAppTheme';
+import AppLock, { useIsAppLockActive } from './src/components/security/AppLock';
 import {
   canRingOverLockScreen,
   requestRingOverLockScreen,
@@ -51,6 +52,7 @@ const AppInner = (): React.ReactElement => {
 
   const { user: sessionUser, isLoading: sessionLoading, token } = useSession();
   const isLoggedIn = !!sessionUser;
+  const appLockActive = useIsAppLockActive();
   const setPushToken = useMutation(api.users.setPushToken);
   const acceptCall = useMutation(api.calls.accept);
   const rejectCall = useMutation(api.calls.reject);
@@ -549,10 +551,20 @@ const AppInner = (): React.ReactElement => {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1 }}>
-          <RootStackNavigator isLoggedIn={isLoggedIn} />
+          <View
+            style={{ flex: 1 }}
+            importantForAccessibility={
+              appLockActive ? 'no-hide-descendants' : 'auto'
+            }
+          >
+            <RootStackNavigator isLoggedIn={isLoggedIn} />
+          </View>
+          {isLoggedIn && <IncomingCallOverlay />}
+          {isLoggedIn && <OngoingCallBar />}
         </SafeAreaView>
-        {isLoggedIn && <IncomingCallOverlay />}
-        {isLoggedIn && <OngoingCallBar />}
+        {/* Mounted last so the lock covers the navigator and the call
+            overlays. Reads the session itself; needs no props. */}
+        <AppLock />
         <Portal>
           <Dialog
             visible={batteryPromptVisible}

@@ -36,6 +36,26 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!--
+      App lock. BiometricGateModule.hasBiometricPermission() reads this before it
+      will present anything, and the merged manifest did not contain it, so the
+      module reported reason "permissionMissing" on every device and the biometric
+      path could never run - leaving the app PIN as the only way in.
+
+      USE_BIOMETRIC replaced USE_FINGERPRINT in API 28; declaring both is the
+      documented way to cover API 23-27, where BiometricGateModule falls back to
+      the legacy name. Neither is a runtime permission, so there is no prompt and
+      no permission dialog to handle.
+
+      This grants no access to biometric data. Templates never leave the TEE and
+      are not reachable through this permission - it only allows the system
+      biometric UI to be shown.
+    -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission
+        android:name="android.permission.USE_FINGERPRINT"
+        android:maxSdkVersion="28" />
+
     <application
       android:name="com.rajofearth.synomilo.MainApplication"
       android:label="@string/app_name"

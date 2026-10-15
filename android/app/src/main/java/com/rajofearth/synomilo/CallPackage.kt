@@ -10,7 +10,14 @@ import com.facebook.react.uimanager.ViewManager
 class CallPackage : ReactPackage {
 
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-        listOf(CallIntentModule(reactContext), CallAudioModule(reactContext))
+        listOf(
+            CallIntentModule(reactContext),
+            CallAudioModule(reactContext),
+            // App lock: biometric gate + FLAG_SECURE, and the encrypted store that
+            // holds the session token and the PIN verifier.
+            BiometricGateModule(reactContext),
+            SecureStoreModule(reactContext),
+        )
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
         emptyList()

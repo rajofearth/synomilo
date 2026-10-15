@@ -7,11 +7,37 @@ import React, {
   useRef,
   useState,
 } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { resetToLogin } from "../navigation/NavigationService";
+import { readPersisted, removePersisted, writePersisted } from "../security/secureStore";
 
+/**
+ * ------------------------------------------------------------------------
+ * SESSION TOKEN STORAGE
+ * ------------------------------------------------------------------------
+ *
+ * These three keys hold a bearer credential - whoever presents the token *is* the
+ * user, with no second factor - and they used to live in plaintext AsyncStorage,
+ * which on Android is an unencrypted SQLite file in the app sandbox, readable by
+ * root and by `adb backup`.
+ *
+ * They now go through `src/security/secureStore.ts`, which reads and writes the
+ * encrypted store on Android and migrates any value still sitting in AsyncStorage
+ * on first read. This is the ONLY change made to this file's behaviour: the TTL
+ * policy, the validation timeout, the offline revocation queue and the
+ * sign-out-teardown ordering are all untouched.
+ *
+ * The migration is deliberately write-then-verify-then-delete, so a keystore
+ * write that does not land leaves the plaintext copy in place - the pre-existing
+ * state - rather than losing the session. See `readPersisted` for the full
+ * ordering and its one accepted failure mode (a Keystore entry lost *after* a
+ * successful migration logs the user out; it never locks them out).
+ *
+ * On iOS there is no `SecureStore` native module, so `readPersisted` /
+ * `writePersisted` / `removePersisted` are plain AsyncStorage wrappers and the
+ * session behaves exactly as before.
+ */
 const TOKEN_KEY = "synomilo.convex.token";
 const TOKEN_ISSUED_AT_KEY = "synomilo.convex.token.issuedAt";
 const PENDING_REVOCATION_KEY = "synomilo.convex.pendingRevocation";
@@ -75,7 +101,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [token, setToken] = useState<string | null>(null);
   /**
-   * True only once AsyncStorage has been read AND any stored token has cleared the TTL
+   * True only once the encrypted store has been read AND any stored token has cleared the TTL
    * check. Children are not rendered before this, which is the whole point: an
    * already-signed-in user must never see the login screen flash while the token is being
    * validated against Convex.
@@ -110,7 +136,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const flushPendingRevocations = useCallback(async () => {
     let pending: string | null = null;
     try {
-      pending = await AsyncStorage.getItem(PENDING_REVOCATION_KEY);
+      pending = await readPersisted(PENDING_REVOCATION_KEY);
     } catch {
       return;
     }
@@ -119,7 +145,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     try {
       await logoutMutation({ token: pending });
-      await AsyncStorage.removeItem(PENDING_REVOCATION_KEY).catch(() => {});
+      await removePersisted([PENDING_REVOCATION_KEY]).catch(() => {});
     } catch {
       // Still offline — retried on the next successful call.
     }
@@ -130,7 +156,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
       try {
         await logoutMutation({ token: tokenToRevoke });
       } catch {
-        await AsyncStorage.setItem(PENDING_REVOCATION_KEY, tokenToRevoke).catch(
+        await writePersisted({ [PENDING_REVOCATION_KEY]: tokenToRevoke }).catch(
           () => {},
         );
       }
@@ -145,8 +171,8 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
       let issuedAt = 0;
       try {
         const [storedToken, storedIssuedAt] = await Promise.all([
-          AsyncStorage.getItem(TOKEN_KEY),
-          AsyncStorage.getItem(TOKEN_ISSUED_AT_KEY),
+          readPersisted(TOKEN_KEY),
+          readPersisted(TOKEN_ISSUED_AT_KEY),
         ]);
         restored = storedToken && storedToken.length > 0 ? storedToken : null;
         issuedAt = storedIssuedAt ? Number(storedIssuedAt) : 0;
@@ -161,14 +187,11 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
         if (!issuedAt || !Number.isFinite(issuedAt)) {
           // Installed before the TTL existed, so the age is unknowable. Stamp it now rather
           // than signing every existing user out on upgrade.
-          await AsyncStorage.setItem(
-            TOKEN_ISSUED_AT_KEY,
-            String(Date.now()),
-          ).catch(() => {});
-        } else if (Date.now() - issuedAt > SESSION_TTL_MS) {
-          await AsyncStorage.multiRemove([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(
+          await writePersisted({ [TOKEN_ISSUED_AT_KEY]: String(Date.now()) }).catch(
             () => {},
           );
+        } else if (Date.now() - issuedAt > SESSION_TTL_MS) {
+          await removePersisted([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(() => {});
           await revokeToken(restored);
           restored = null;
           setNotice("Your session expired after 30 days. Please log in again.");
@@ -200,7 +223,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
    */
   useEffect(() => {
     if (token && me === null) {
-      AsyncStorage.multiRemove([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(() => {});
+      removePersisted([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(() => {});
       setToken(null);
       setLocallyAcceptedToken(null);
       setNotice("Your session has ended. Please log in again.");
@@ -218,7 +241,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
       return;
     }
     const timer = setTimeout(() => {
-      AsyncStorage.multiRemove([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(() => {});
+      removePersisted([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(() => {});
       setToken(null);
       setLocallyAcceptedToken(null);
       setNotice(
@@ -231,10 +254,10 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const signIn = useCallback(async (nextToken: string) => {
     const issuedAt = Date.now();
-    await AsyncStorage.multiSet([
-      [TOKEN_KEY, nextToken],
-      [TOKEN_ISSUED_AT_KEY, String(issuedAt)],
-    ]);
+    await writePersisted({
+      [TOKEN_KEY]: nextToken,
+      [TOKEN_ISSUED_AT_KEY]: String(issuedAt),
+    });
     setNotice(null);
     // Same tick, so the tree is never torn down mid-login.
     setLocallyAcceptedToken(nextToken);
@@ -270,11 +293,9 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
        * at that point would delete the brand-new token and silently sign them straight back
        * out. Only wipe if the stored token is still the one we signed out of.
        */
-      const stored = await AsyncStorage.getItem(TOKEN_KEY).catch(() => null);
+      const stored = await readPersisted(TOKEN_KEY).catch(() => null);
       if (stored === currentToken || (stored === null && !currentToken)) {
-        await AsyncStorage.multiRemove([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(
-          () => {},
-        );
+        await removePersisted([TOKEN_KEY, TOKEN_ISSUED_AT_KEY]).catch(() => {});
       }
     } finally {
       signingOutRef.current = false;

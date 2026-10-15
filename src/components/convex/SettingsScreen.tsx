@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   AppState,
   Linking,
+  Modal,
   NativeModules,
   Pressable,
   ScrollView,
@@ -12,9 +13,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons';
 import DeviceInfo from 'react-native-device-info';
-import { Text, useTheme } from 'react-native-paper';
+import { Button, Text, useTheme } from 'react-native-paper';
 import { useSession } from '../../auth/SessionProvider';
 import { APP_NAME } from '../../utils/AppConstants';
+import { PinField, useAppLock } from '../security/AppLock';
+import {
+  APP_LOCK_GRACE_OPTIONS,
+  PIN_MAX_LENGTH,
+  PIN_MIN_LENGTH,
+} from '../../security/secureStore';
+import { getBiometricAvailability } from '../../security/biometric';
 
 const GITHUB_URL = 'https://github.com/rajofearth';
 const SOURCE_URL = 'https://github.com/rajofearth/synomilo';
@@ -107,10 +115,258 @@ const Chevron = () => {
   );
 };
 
+/**
+ * Create-or-change PIN.
+ *
+ * Two stages, because a mistyped PIN that is accepted once is a lock nobody can
+ * get back into. The confirm stage is what makes that a non-event.
+ *
+ * The PIN is never stored here. It is held in component state long enough to
+ * hash, passed once to `SecureStore.setPin`, and dropped on close - it becomes a
+ * PBKDF2-HMAC-SHA256 verifier over a 32-byte per-install salt inside the
+ * encrypted store, and there is no read path that could return it.
+ */
+type PinSheetProps = {
+  visible: boolean;
+  mode: 'create' | 'change';
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (pin: string) => void;
+};
+
+const PinSheet = ({ visible, mode, busy, onCancel, onSubmit }: PinSheetProps) => {
+  const { colors } = useTheme();
+  const [stage, setStage] = useState<'enter' | 'confirm'>('enter');
+  const [pin, setPin] = useState('');
+  const [first, setFirst] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible) {
+      setStage('enter');
+      setPin('');
+      setFirst('');
+      setError(null);
+    }
+  }, [visible]);
+
+  const advance = useCallback(() => {
+    if (pin.length < PIN_MIN_LENGTH || pin.length > PIN_MAX_LENGTH) {
+      setError(`Use ${PIN_MIN_LENGTH} to ${PIN_MAX_LENGTH} digits.`);
+      return;
+    }
+    if (stage === 'enter') {
+      setFirst(pin);
+      setPin('');
+      setError(null);
+      setStage('confirm');
+      return;
+    }
+    if (pin !== first) {
+      // Deliberately not "the PINs did not match" - same thing, fewer characters,
+      // and it does not restate what was typed.
+      setError('Those did not match. Start again.');
+      setPin('');
+      setFirst('');
+      setStage('enter');
+      return;
+    }
+    onSubmit(pin);
+  }, [pin, first, stage, onSubmit]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      statusBarTranslucent
+    >
+      <Pressable
+        style={[styles.sheetBackdrop, { backgroundColor: colors.scrim }]}
+        onPress={onCancel}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      />
+      <View
+        style={[
+          styles.sheet,
+          { backgroundColor: colors.elevation.level2, borderColor: colors.outlineVariant },
+        ]}
+        accessibilityViewIsModal
+      >
+        <Text variant="titleMedium" style={{ color: colors.onSurface }}>
+          {mode === 'create' ? 'Create a PIN' : 'Change your PIN'}
+        </Text>
+        <Text variant="bodyMedium" style={{ color: colors.onSurfaceVariant }}>
+          {stage === 'enter'
+            ? `Choose ${PIN_MIN_LENGTH} to ${PIN_MAX_LENGTH} digits. You will need it if biometrics ever fail.`
+            : 'Enter it once more to confirm.'}
+        </Text>
+
+        <PinField
+          label={stage === 'enter' ? 'New PIN' : 'Confirm PIN'}
+          value={pin}
+          onChange={next => {
+            setPin(next);
+            setError(null);
+          }}
+          onSubmit={advance}
+          autoFocus
+          disabled={busy}
+        />
+
+        {error ? (
+          <Text
+            variant="bodyMedium"
+            accessibilityLiveRegion="polite"
+            style={{ color: colors.onError }}
+          >
+            {error}
+          </Text>
+        ) : null}
+
+        <View style={styles.sheetActions}>
+          <Button
+            onPress={onCancel}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+            accessibilityState={{ disabled: busy }}
+          >
+            Cancel
+          </Button>
+          <Button
+            mode="contained"
+            onPress={advance}
+            disabled={busy}
+            loading={busy}
+            accessibilityRole="button"
+            accessibilityLabel={stage === 'enter' ? 'Continue' : 'Save PIN'}
+            accessibilityState={{ disabled: busy, busy }}
+          >
+            {stage === 'enter' ? 'Continue' : 'Save'}
+          </Button>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 const SettingsScreen = ({ navigation }: any) => {
   const { colors } = useTheme();
   const { signOut } = useSession();
   const [batteryAllowed, setBatteryAllowed] = useState<boolean | null>(null);
+
+  const lockStatus = useAppLock(state => state.status);
+  const lockEnabled = useAppLock(state => state.enabled);
+  const lockGraceMs = useAppLock(state => state.graceMs);
+  const lockPinSet = useAppLock(state => state.pinSet);
+  const lockBusy = useAppLock(state => state.busy);
+  const lockError = useAppLock(state => state.error);
+  const lockAvailability = useAppLock(state => state.availability);
+  const lockBackend = useAppLock(state => state.backend);
+  const refreshLock = useAppLock(state => state.refresh);
+  const enableLock = useAppLock(state => state.enable);
+  const changeLockPin = useAppLock(state => state.changePin);
+  const disableLock = useAppLock(state => state.disable);
+  const setLockGrace = useAppLock(state => state.setGrace);
+
+  const [pinSheet, setPinSheet] = useState<'create' | 'change' | null>(null);
+
+  /**
+   * Re-read the lock when this screen comes back into view.
+   *
+   * Settings is reachable while the gate is armed, and the gate can change state
+   * underneath (the user may have just been re-locked on foreground). Refreshing
+   * on focus means the rows describe reality rather than what was true when the
+   * screen mounted.
+   */
+  useEffect(() => {
+    refreshLock();
+    getBiometricAvailability()
+      .then(found => useAppLock.getState().setAvailability(found))
+      .catch(() => {});
+    const subscription = navigation.addListener?.('focus', () => {
+      refreshLock().catch(() => {});
+    });
+    return () => subscription?.remove?.();
+  }, [navigation, refreshLock]);
+
+  const biometricLabel = useMemo(() => {
+    if (lockAvailability?.available) {
+      return 'On — biometrics, with PIN fallback';
+    }
+    if (lockAvailability?.reason === 'noneEnrolled') {
+      return 'On — PIN only (no biometrics enrolled)';
+    }
+    if (lockAvailability?.reason === 'permissionMissing') {
+      return 'On — PIN only (biometrics unavailable)';
+    }
+    return 'On — PIN only (biometrics unavailable)';
+  }, [lockAvailability]);
+
+  const lockDescription = (() => {
+    if (lockStatus === 'unsupported') {
+      return 'Not available on this platform';
+    }
+    if (lockStatus === 'unknown') {
+      return 'Checking…';
+    }
+    if (lockStatus === 'storeBroken') {
+      return 'On — secure storage unreadable, reset required';
+    }
+    return lockEnabled ? biometricLabel : 'Off';
+  })();
+
+  const submitPin = useCallback(
+    async (pin: string) => {
+      const ok =
+        pinSheet === 'create' ? await enableLock(pin) : await changeLockPin(pin);
+      if (ok) {
+        setPinSheet(null);
+      }
+    },
+    [pinSheet, enableLock, changeLockPin],
+  );
+
+  const confirmDisable = useCallback(() => {
+    Alert.alert(
+      'Turn off the app lock?',
+      `${APP_NAME} will stop asking for a fingerprint or PIN when it opens. Your PIN will be erased from this device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Turn off',
+          style: 'destructive',
+          onPress: () => {
+            disableLock().catch(() => {});
+          },
+        },
+      ],
+    );
+  }, [disableLock]);
+
+  const confirmGraceChange = useCallback(
+    (ms: number) => {
+      Alert.alert(
+        'Lock when returning to the app',
+        ms === 0
+          ? `${APP_NAME} will lock the moment it goes into the background.`
+          : `${APP_NAME} will lock if you are away for more than ${
+              APP_LOCK_GRACE_OPTIONS.find(option => option.ms === ms)?.label.replace(
+                /^After /,
+                '',
+              ) ?? `${Math.round(ms / 1000)} seconds`
+            }.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Set', onPress: () => { setLockGrace(ms).catch(() => {}); } },
+        ],
+      );
+    },
+    [setLockGrace],
+  );
 
   const refreshBatteryState = useCallback(() => {
     NativeModules.Installer?.isIgnoringBatteryOptimizations?.()
@@ -238,11 +494,106 @@ const SettingsScreen = ({ navigation }: any) => {
           />
         </View>
 
+{/**
+          * APP LOCK. Placed above ABOUT because it is the one row on this screen
+          * that changes what the app shows on open, and it is the section people
+          * look for when they are worried about someone else picking up the phone.
+          */}
+        {lockStatus !== 'unsupported' ? (
+          <View style={[styles.card, card]}>
+            <Text variant="labelLarge" style={styles.sectionLabel}>
+              APP LOCK
+            </Text>
+
+            <SettingRow
+              icon="shield-lock-outline"
+              title="Require unlock"
+              description={lockDescription}
+              trailing={
+                lockEnabled ? (
+                  <MaterialDesignIcons name="check" size={20} color={colors.onSurface} />
+                ) : (
+                  <MaterialDesignIcons name="check" size={20} color={colors.outline} />
+                )
+              }
+              onPress={() => {
+                if (lockEnabled) {
+                  confirmDisable();
+                } else {
+                  setPinSheet('create');
+                }
+              }}
+              disabled={lockBusy || lockStatus === 'unknown' || lockStatus === 'storeBroken'}
+            />
+
+            {lockEnabled ? (
+              <>
+                <View
+                  style={[styles.divider, { backgroundColor: colors.outlineVariant }]}
+                />
+                <SettingRow
+                  icon="pin-outline"
+                  title="Change PIN"
+                  description={
+                    lockPinSet
+                      ? 'Requires biometrics to be off, or your current PIN'
+                      : 'Set a PIN to unlock without biometrics'
+                  }
+                  trailing={<Chevron />}
+                  onPress={() => setPinSheet('change')}
+                  disabled={lockBusy || lockStatus === 'storeBroken'}
+                />
+                <View
+                  style={[styles.divider, { backgroundColor: colors.outlineVariant }]}
+                />
+                <SettingRow
+                  icon="timer-sand"
+                  title="Lock when returning"
+                  description={
+                    APP_LOCK_GRACE_OPTIONS.find(
+                      option => option.ms === lockGraceMs,
+                    )?.label ?? 'After 30 seconds'
+                  }
+                  trailing={<Chevron />}
+                  onPress={() => {
+                    const index = APP_LOCK_GRACE_OPTIONS.findIndex(
+                      option => option.ms === lockGraceMs,
+                    );
+                    const next =
+                      APP_LOCK_GRACE_OPTIONS[
+                        (index + 1) % APP_LOCK_GRACE_OPTIONS.length
+                      ];
+                    confirmGraceChange(next.ms);
+                  }}
+                  disabled={lockBusy || lockStatus === 'storeBroken'}
+                />
+              </>
+            ) : null}
+
+            {lockError ? (
+              <Text
+                variant="bodyMedium"
+                accessibilityLiveRegion="polite"
+                style={[styles.lockError, { color: colors.onError }]}
+              >
+                {lockError}
+              </Text>
+            ) : null}
+
+            <Text variant="bodySmall" style={[styles.lockNote, { color: colors.onSurfaceVariant }]}>
+              Two wrong PINs are free; after that the app waits 30 seconds, doubling up to
+              15 minutes. It never locks you out permanently — if you forget the PIN, the
+              lock screen signs you out and erases it so you can sign in again.
+              {lockBackend ? ` Storage: ${lockBackend}.` : ''}
+            </Text>
+          </View>
+        ) : null}
+
         {/**
-         * Where the Profile screen's APP card went. The version line already lived
-         * here, so it is the platform row that is genuinely new here; the relocated
-         * version row was the app's second rendering of the same `DeviceInfo` value.
-         */}
+          * Where the Profile screen's APP card went. The version line already lived
+          * here, so it is the platform row that is genuinely new here; the relocated
+          * version row was the app's second rendering of the same `DeviceInfo` value.
+          */}
         <View style={[styles.card, card]}>
           <Text variant="labelLarge" style={styles.sectionLabel}>
             ABOUT
@@ -313,6 +664,14 @@ const SettingsScreen = ({ navigation }: any) => {
           </Text>
         </Pressable>
       </ScrollView>
+
+      <PinSheet
+        visible={pinSheet !== null}
+        mode={pinSheet === 'change' ? 'change' : 'create'}
+        busy={lockBusy}
+        onCancel={() => setPinSheet(null)}
+        onSubmit={submitPin}
+      />
     </SafeAreaView>
   );
 };
@@ -386,5 +745,30 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 20,
     marginTop: 4,
+  },
+  lockError: {
+    paddingVertical: 8,
+  },
+  lockNote: {
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  sheet: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 24,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 20,
+    gap: 14,
+  },
+  sheetActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
   },
 });

@@ -89,8 +89,8 @@ android {
         applicationId "com.rajofearth.synomilo"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "1.0.9"
+        versionCode 11
+        versionName "1.1.0"
     }
     signingConfigs {
         debug {
@@ -131,4 +131,23 @@ dependencies {
     }
 
     implementation 'com.facebook.fresco:animated-gif:3.6.0' //gif android
+
+    /**
+     * App lock.
+     *
+     * `androidx.biometric:biometric` is the BiometricPrompt wrapper that gives us
+     * one code path across the Android versions this app supports, and it is the
+     * only supported way to reach BiometricPrompt at all now that the framework
+     * version is deprecated. 1.1.0 is the latest stable release.
+     *
+     * `androidx.security:security-crypto` supplies EncryptedSharedPreferences, which
+     * wraps every stored value in AES256-GCM under a MasterKey held in the
+     * AndroidKeyStore. SecurityStoreModule falls back to a Keystore-wrapped
+     * AES-GCM key if this cannot be initialised on a given device.
+     *
+     * Neither dependency is a biometric SDK. They contain no fingerprint or face
+     * templates and no code that could obtain one.
+     */
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'androidx.security:security-crypto:1.1.0'
 }
