@@ -8,6 +8,8 @@ import {
   Alert,
   Animated,
   Easing,
+  AppState,
+  type AppStateStatus,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from 'react-native-paper';
@@ -17,19 +19,43 @@ import { useSession } from '../../auth/SessionProvider';
 import { navigate } from '../../navigation/NavigationService';
 import { convexErrorMessage } from '../../utils/convexError';
 import UserAvatar from '../convex/UserAvatar';
-import { reconcileCallNotifications } from '../../notifications/callNotifications';
+import {
+  dismissCallNotification,
+  reconcileCallNotifications,
+  showIncomingCallNotification,
+} from '../../notifications/callNotifications';
 import { teardownRinging } from '../../notifications/background';
+import { IncomingCallRingBridge } from '../../notifications/foregroundRinging';
 
 /**
  * The in-app half of incoming-call UI, shown when the user is already in the app.
+ * It is also, in this state, the thing that RINGS.
  *
  * The other half - the lock-screen ring activity - is the SAME state machine seen
  * from outside the app: one Convex query (`calls.incoming`) and one ringing
- * Notifee notification, in both cases. This overlay used to suppress that
- * notification entirely while the app was visible, which meant a call arriving
- * with the app open produced a silent card and nothing else. It now leaves the
- * ringing notification alone and only owns the Accept/Decline decision, which is
- * why nothing here cancels the notification on an AppState change any more.
+ * Notifee notification, in both cases.
+ *
+ * ## The ring is owned by whoever is on screen
+ *
+ * This component used to delegate ringing to the notification channel in every
+ * state, which is right for a backgrounded app and wrong for a visible one, for
+ * two reasons:
+ *
+ *   1. An overlay on top of a looping notification is a ring the user cannot
+ *      silence, and a notification whose Accept/Decline buttons duplicate the
+ *      card directly behind it.
+ *   2. Far worse, every path that cancels that notification then removes the
+ *      ONLY sound in the app. `teardownRinging` cancels the notification - which
+ *      is what stops the channel sound and the vibration - and this component
+ *      had nothing to replace it with. Accepting, declining, or the stale-ring
+ *      reconcile firing while the app was open therefore produced a call that
+ *      was still ringing, silently. That is the reported bug.
+ *
+ * So while the overlay is up it owns the ring itself (see
+ * `IncomingCallRingBridge`) and cancels the notification channel; the moment the
+ * app stops being visible it hands the ring back, because a native ring owned by
+ * a suspended JS runtime can neither show a ring screen over the keyguard nor
+ * be stopped by a terminal push. See the AppState effect below.
  */
 const IncomingCallOverlay: React.FC = () => {
   const { token } = useSession();
@@ -60,11 +86,31 @@ const IncomingCallOverlay: React.FC = () => {
   const rejectCall = useMutation(api.calls.reject);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * Everything a ring puts up comes down, in the order that matters: the sound
+   * first, then the notification, then the deferred accept.
+   *
+   * The sound goes FIRST and unconditionally, before the mutation is even sent.
+   * `teardownRinging` cancels the ringing notification, which is what stops the
+   * channel sound and the vibration - and since this overlay owns the ring while
+   * it is on screen, cancelling the notification on its own would silence a call
+   * the user is still being invited to answer. The user has pressed a button;
+   * that decision is final whatever the server says, so the ring stops here and
+   * not after a round trip.
+   *
+   * `dismissActivity: false` - there is no ring activity over a foreground app.
+   */
+  const silenceRing = useCallback((callId: string) => {
+    IncomingCallRingBridge.stop(callId).catch(() => {});
+    return teardownRinging(callId, false).catch(() => {});
+  }, []);
+
   const accept = useCallback(async () => {
     if (!token || !incoming || busy) {
       return;
     }
     setBusy(true);
+    await silenceRing(incoming._id);
     try {
       await acceptCall({ token, callId: incoming._id as any });
       navigate('CallScreen', {
@@ -79,26 +125,21 @@ const IncomingCallOverlay: React.FC = () => {
         convexErrorMessage(error, 'The call may have ended.'),
       );
     } finally {
-      // `finally`, not the success path. The teardown used to sit after
-      // `await acceptCall(...)`, so a mutation that threw - a dropped connection, or
-      // accept's "You are already on another call" - jumped straight to `catch` and
-      // left the ringing notification alive and looping. `accept` throws for reasons
-      // that have nothing to do with whether the user answered, and either way the
-      // ringing UI is gone: the user made a decision. The call itself is already
-      // terminal in the server's view in most of these cases.
-      //
-      // `dismissActivity: false` - there is no ring activity over a foreground app.
-      // Everything a ring puts up comes down here: notification, deferred accept.
+      // Belt and braces. `silenceRing` above has already stopped everything, and
+      // this second pass is the one that still holds if the handler is entered by
+      // a path that skipped it - it is idempotent by construction, so it costs
+      // nothing when it has nothing to do.
       await teardownRinging(incoming._id, false).catch(() => {});
       setBusy(false);
     }
-  }, [token, incoming, busy, acceptCall]);
+  }, [token, incoming, busy, acceptCall, silenceRing]);
 
   const decline = useCallback(async () => {
     if (!token || !incoming || busy) {
       return;
     }
     setBusy(true);
+    await silenceRing(incoming._id);
     try {
       await rejectCall({ token, callId: incoming._id as any });
     } catch {
@@ -110,7 +151,96 @@ const IncomingCallOverlay: React.FC = () => {
       await teardownRinging(incoming._id, false).catch(() => {});
       setBusy(false);
     }
-  }, [token, incoming, busy, rejectCall]);
+  }, [token, incoming, busy, rejectCall, silenceRing]);
+
+  /**
+   * Start ringing for this call, and take the notification channel out of the
+   * business.
+   *
+   * Order matters. The ring starts first so that a call whose notification was
+   * already posted (it arrives over FCM before this query can possibly have
+   * delivered it) never has a window in which it is neither ringing nor
+   * answered; the notification is cancelled immediately afterwards so the two
+   * owners never overlap audibly.
+   *
+   * The cleanup is the only thing that stops a ring nobody decided on - the
+   * server timeout, a remote decline, the query going quiet - and it stops it by
+   * callId, so an unmount racing a different call cannot silence that call.
+   */
+  useEffect(() => {
+    if (!incomingId) {
+      return;
+    }
+    IncomingCallRingBridge.start(incomingId).catch(() => {});
+    dismissCallNotification(incomingId);
+    return () => {
+      IncomingCallRingBridge.stop(incomingId).catch(() => {});
+    };
+  }, [incomingId]);
+
+  /**
+   * Hand the ring between its two owners when the app stops being visible.
+   *
+   * Not optional, and this is the half of the ownership rule that is easy to
+   * miss. A native ring belongs to a JS runtime that Android may suspend at any
+   * moment, so if the user swipes away from a call that arrived in the
+   * foreground:
+   *
+   *   - nothing can show a ring screen over the lock screen, because that is the
+   *     notification's full-screen intent and there is no notification;
+   *   - a terminal push (caller hung up, the 60s window expired) arrives in a
+   *     headless task with no way to reach this component, so the sound would
+   *     play on past the end of the call;
+   *   - if the process is killed the ring dies with it and the user is left with
+   *     a call they can neither answer nor decline.
+   *
+   * So going to `background` posts the ringing notification - full-screen intent,
+   * Accept/Decline buttons and all - and only then stops the native ring.
+   * Coming back to `active` reverses it, and is gated on having actually handed
+   * it over so that a notification-shade pull, which Android reports as
+   * `inactive` and then `active`, cannot restart the ringtone from its first bar.
+   */
+  const ringIsWithNotification = useRef(false);
+  useEffect(() => {
+    if (!incomingId) {
+      ringIsWithNotification.current = false;
+      return;
+    }
+    const call = incoming;
+    let subscription: { remove: () => void } | undefined;
+    try {
+      subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+        if (state === 'background') {
+          if (ringIsWithNotification.current) {
+            return;
+          }
+          ringIsWithNotification.current = true;
+          showIncomingCallNotification({
+            callId: incomingId,
+            callerName: call ? callerNameOf(call) : '',
+            type: call?.type ?? 'audio',
+          })
+            .then(() => IncomingCallRingBridge.stop(incomingId))
+            // The handover failed, so the native ring is still ours. Nothing to
+            // undo: it is already the one thing ringing.
+            .catch(() => {
+              ringIsWithNotification.current = false;
+            });
+          return;
+        }
+        if (state === 'active' && ringIsWithNotification.current) {
+          ringIsWithNotification.current = false;
+          dismissCallNotification(incomingId);
+          IncomingCallRingBridge.start(incomingId).catch(() => {});
+        }
+      });
+    } catch {
+      // A runtime with no AppState emitter still rings; it just cannot hand over.
+    }
+    return () => {
+      subscription?.remove();
+    };
+  }, [incomingId, incoming]);
 
   /**
    * Reconcile the OS notification against the live query.
@@ -124,6 +254,10 @@ const IncomingCallOverlay: React.FC = () => {
    * Scoped to `call:*` rather than "all call notifications" on purpose: an ongoing
    * call is a different notification with a different lifetime, and this effect
    * must not be able to tear down the notification for a call already connected.
+   *
+   * Safe to run at any time now, including while a call is ringing in this
+   * window: while the overlay is up it owns the ring and no ringing notification
+   * exists, so there is nothing here that can silence a live call.
    */
   useEffect(() => {
     if (incomingId) {

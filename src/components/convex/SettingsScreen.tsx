@@ -17,6 +17,7 @@ import { Button, Text, useTheme } from 'react-native-paper';
 import { useSession } from '../../auth/SessionProvider';
 import { APP_NAME } from '../../utils/AppConstants';
 import { PinField, useAppLock } from '../security/AppLock';
+import { summarizeLockState } from '../../security/appLockPolicy';
 import {
   APP_LOCK_GRACE_OPTIONS,
   PIN_MAX_LENGTH,
@@ -307,18 +308,17 @@ const SettingsScreen = ({ navigation }: any) => {
     return 'On: PIN only (biometrics unavailable)';
   }, [lockAvailability]);
 
-  const lockDescription = (() => {
-    if (lockStatus === 'unsupported') {
-      return 'Not available on this platform';
-    }
-    if (lockStatus === 'unknown') {
-      return 'Checking…';
-    }
-    if (lockStatus === 'storeBroken') {
-      return 'On: secure storage unreadable, reset required';
-    }
-    return lockEnabled ? biometricLabel : 'Off';
-  })();
+  // One description, derived from the same state the gate reads. It used to be
+  // written out again here, which is how the row could promise a PIN fallback
+  // that was not on screen, or say "off" where the gate said "not available".
+  // A row that describes something other than what will happen is a correctness
+  // bug, not a cosmetic one, so the wording is not a local decision.
+  const lockDescription = summarizeLockState({
+    status: lockStatus,
+    enabled: lockEnabled,
+    pinSet: lockPinSet,
+    biometricsAvailable: lockAvailability?.available === true,
+  }).label;
 
   const submitPin = useCallback(
     async (pin: string) => {

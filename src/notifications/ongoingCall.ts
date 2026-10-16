@@ -14,6 +14,7 @@ import {
   type CallMediaFlags,
 } from './callMediaState';
 import { headlessConvexClient, readSessionToken } from './convexHeadless';
+import { hasOngoingCall } from '../components/calls/callStore';
 
 export const ONGOING_ACTION_MUTE = 'toggle-mute';
 export const ONGOING_ACTION_SPEAKER = 'toggle-speaker';
@@ -113,6 +114,28 @@ export async function showOngoingCallNotification(
   });
 }
 
+/**
+ * Take the ongoing-call notification down.
+ *
+ * Reached from three places that mean different things, and the difference is
+ * why the audio release below is conditional:
+ *
+ *  - **the user came back to the app** with the call still live, which is the
+ *    "minimise, check who messaged, tap back into the call" path;
+ *  - **a hangup**, from the in-call button, the notification's End action, or the
+ *    terminal `calls.end`;
+ *  - **a terminal `cancelled` / `ended` push** with no screen mounted.
+ *
+ * It used to release audio on all three, which meant returning to the foreground
+ * took a *live* call out of voice-call mode: `clearCommunicationDevice()` plus
+ * `MODE_NORMAL`, so no Bluetooth, no speaker, and the peer coming out of a phone
+ * that had stopped treating itself as being on a call. The audio mode and the
+ * communication device are one global slot with one owner, and the owner is "a
+ * call that is still going" rather than "this call" - hence `hasOngoingCall()`
+ * rather than a comparison against `callId`. `WebRTCCallScreen.hangUp` clears the
+ * store *before* coming here precisely so that "the call just ended" and "the
+ * user just came back" are distinguishable at this point.
+ */
 export async function hideOngoingCallNotification(
   callId: string,
 ): Promise<void> {
@@ -127,6 +150,12 @@ export async function hideOngoingCallNotification(
     } catch {}
     foregroundServiceRegistered = false;
   }
+  if (hasOngoingCall()) {
+    return;
+  }
+  // The call is over: this module acquired the audio mode and the route, so it is
+  // the one that has to give them back. A live call must not reach this - not even
+  // for the mute/speaker flags, which the notification's own actions own.
   callMediaState.reset();
   await releaseAudioRoute();
 }

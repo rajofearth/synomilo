@@ -173,11 +173,6 @@ const AppInner = (): React.ReactElement => {
       if (state !== 'active') {
         return;
       }
-      // Returning to the foreground by way of the call screen is the second
-      // path into a call: the accept ran in a native activity, so JS woke up
-      // after the navigation rather than driving it. Without this stamp the lock
-      // would re-arm against a resume that was really an answer.
-      noteCallHandOff();
       getFcmToken().then(value => {
         if (!cancelled && value && value !== fcmTokenRef.current) {
           store(token ?? null, value);

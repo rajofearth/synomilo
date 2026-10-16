@@ -70,6 +70,43 @@ export async function applyAudioRoute(speakerOn: boolean): Promise<boolean> {
   }
 }
 
+/**
+ * Put the session into voice-call mode without expressing a preference about
+ * *where* the audio comes out.
+ *
+ * `MODE_IN_COMMUNICATION` is required - it is what engages Android's voice-call
+ * processing and stops the peer coming out of the loudspeaker - and the platform
+ * then routes to a connected Bluetooth or wired headset and falls back to the
+ * earpiece by itself.
+ *
+ * The distinction from [applyAudioRoute] is the whole point: `setSpeakerOn(false)`
+ * and `setCommunicationDevice(TYPE_BUILTIN_EARPIECE)` are *overrides*. Calling
+ * either at setup is what made a Bluetooth headset or a car kit be ignored for
+ * the whole call unless the user noticed and turned the override back off, so
+ * this deliberately expresses nothing and only undoes a stale override.
+ *
+ * The user-facing speaker toggle is untouched: it still goes through
+ * [applyAudioRoute].
+ */
+export async function prepareCallAudioRoute(): Promise<boolean> {
+  if (Platform.OS !== 'android') {
+    return false;
+  }
+  const audio = NativeModules.CallAudio as
+    | { useDefaultRoute?: () => Promise<boolean> }
+    | undefined;
+  if (!audio?.useDefaultRoute) {
+    // A native binary predating the method. The old behaviour is better than
+    // doing nothing, because it at least sets the audio mode.
+    return applyAudioRoute(false);
+  }
+  try {
+    return await audio.useDefaultRoute();
+  } catch {
+    return false;
+  }
+}
+
 export async function releaseAudioRoute(): Promise<void> {
   if (Platform.OS !== 'android') {
     return;

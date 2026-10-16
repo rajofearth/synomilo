@@ -10,7 +10,7 @@ export const MESSAGE_CHANNEL_ID = 'default';
 /**
  * RING CHANNEL.
  *
- * v2 -> v3 -> v4, and every bump is forced by one fact:
+ * v2 -> v3 -> v4 -> v5, and every bump is forced by one fact:
  * `android.app.NotificationChannel` is immutable once created. `createChannel` is
  * not an upsert for the fields that matter here - Android silently discards a
  * second call's importance/sound/vibration/visibility and keeps what the channel
@@ -31,12 +31,17 @@ export const MESSAGE_CHANNEL_ID = 'default';
  *      which is how it was reported as reversed.
  *  v4: the device ringtone again, but only after the fallback has been made
  *      honest - see [BUNDLED_RINGTONE] and [resolveRingSound].
+ *  v5: the same, with the device ringtone CHECKED before it is frozen into the
+ *      channel. v4 accepted any non-empty string, so a ringtone URI that does
+ *      not resolve - a provider-backed `content://` this app cannot read, a
+ *      default that has been revoked - was written into an immutable channel and
+ *      produced a permanently silent ring. See [resolveRingSound].
  *
  * Note that `AndroidImportance.MAX` does not exist in @notifee 9.x - the enum stops
  * at HIGH (4). Passing a raw 5 would be rejected by `validateAndroidChannel`
  * ("expected an Importance value") and abort channel creation.
  */
-export const CALL_CHANNEL_ID = 'incoming_call_v4';
+export const CALL_CHANNEL_ID = 'incoming_call_v5';
 
 /**
  * The ongoing-call channel. Separate from the ringing channel on purpose: Android
@@ -125,6 +130,22 @@ let channelsReady = false;
  * `default` yields TYPE_NOTIFICATION. So a null from the platform means "the user
  * has set their ringtone to None", and the honest answer to that is a bundled
  * ringtone rather than a channel that is configured correctly and silent.
+ *
+ * ## Why v4 was not enough
+ *
+ * "Non-empty" is not "playable". `RingtoneManager.getDefaultUri(TYPE_RINGTONE)`
+ * returns whatever Settings has selected, which on a real device is very often a
+ * URI this app cannot open at all: a carrier- or cloud-ringtone provider backed by
+ * an account the app has no access to, or a default that has since been revoked.
+ * v4 checked only for emptiness, wrote that URI into an immutable channel, and the
+ * result was a channel configured perfectly and permanently silent - the "sometimes
+ * there is no ringtone at all" report, and unfixable from JS afterwards, because
+ * Android will not let a channel's sound be changed in place.
+ *
+ * So the URI is now ASKED whether it can actually be played
+ * (`CallAudio.isRingtonePlayable`, which opens it with the platform media stack)
+ * and the bundled clip is used when it cannot be. Both failure modes now land on a
+ * ring the user can hear.
  */
 async function resolveRingSound(): Promise<string> {
   if (Platform.OS !== 'android') {
@@ -132,10 +153,22 @@ async function resolveRingSound(): Promise<string> {
   }
   try {
     const audio = NativeModules.CallAudio as
-      | { getDefaultRingtoneUri?: () => Promise<string | null> }
+      | {
+          getDefaultRingtoneUri?: () => Promise<string | null>;
+          isRingtonePlayable?: (uri: string) => Promise<boolean>;
+        }
       | undefined;
-    const uri = await audio?.getDefaultRingtoneUri?.();
-    return uri?.trim() ? uri.trim() : BUNDLED_RINGTONE;
+    const uri = (await audio?.getDefaultRingtoneUri?.())?.trim();
+    if (!uri) {
+      return BUNDLED_RINGTONE;
+    }
+    // A platform with no validator cannot be asked. Taking the URI at its word is
+    // the old behaviour and is no worse; on Android the module is always present.
+    if (audio?.isRingtonePlayable && !(await audio.isRingtonePlayable(uri))) {
+      console.log('[push] device ringtone will not play, using bundled ringtone');
+      return BUNDLED_RINGTONE;
+    }
+    return uri;
   } catch (error) {
     console.log('[push] ringtone lookup failed, using bundled ringtone', error);
     return BUNDLED_RINGTONE;
@@ -206,29 +239,17 @@ export interface IncomingCallInfo {
   type: 'audio' | 'video';
 }
 
-export interface RingNotificationOptions {
-  /**
-   * The user is already inside the app, where `IncomingCallOverlay` is showing the
-   * full-screen Accept/Decline card for this same call.
-   *
-   * It used to mean "do not post a notification at all", which is what made the
-   * foreground path mute: no notification means no channel sound and no
-   * vibration, so a call arriving while the app was open rang nowhere. The
-   * foreground and background paths now converge on ONE ringing notification; the
-   * only thing that changes is that its duplicate Accept/Decline buttons are
-   * dropped, because the overlay already is the answer surface.
-   */
-  suppressActions?: boolean;
-}
-
 /**
- * The single ringing notification. Posted identically whether the app is
- * foreground, background or killed - the full-screen intent is attached in every
- * case because Android only fires one anyway when the keyguard is up.
+ * The single ringing notification.
+ *
+ * Posted when the app is NOT visible - backgrounded, killed, or in the window
+ * where the overlay has handed the ring over on its way out. While the app is
+ * visible the overlay owns the ring instead and no notification exists at all:
+ * `handleDataMessage` returns before reaching this, and the overlay cancels any
+ * ringing notification that was already posted by a push that arrived first.
  */
 export async function showIncomingCallNotification(
   call: IncomingCallInfo,
-  options?: RingNotificationOptions,
 ): Promise<void> {
   await ensureNotificationChannels();
   // A blank name must never reach the ring screen or the shade as the literal
@@ -281,12 +302,12 @@ export async function showIncomingCallNotification(
       // i.e. exactly on a locked screen - the thing it opened WAS the accept button.
       fullScreenAction: { id: 'open-call', launchActivity: RINGING_ACTIVITY },
       pressAction: { id: 'open-call', launchActivity: RINGING_ACTIVITY },
-      actions: options?.suppressActions
-        ? []
-        : [
-            { title: 'Decline', pressAction: { id: 'decline-call' } },
-            { title: 'Accept', pressAction: { id: 'accept-call' } },
-          ],
+      // Always present. This notification is only ever posted when the app is not
+      // visible, so there is never an overlay behind it to duplicate these.
+      actions: [
+        { title: 'Decline', pressAction: { id: 'decline-call' } },
+        { title: 'Accept', pressAction: { id: 'accept-call' } },
+      ],
       showTimestamp: false,
     },
   });

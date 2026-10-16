@@ -25,6 +25,7 @@ import { api } from '../../../convex/_generated/api';
 import { useSession } from '../../auth/SessionProvider';
 import { convexErrorMessage } from '../../utils/convexError';
 import { useAppLock } from '../security/AppLock';
+import { summarizeLockState } from '../../security/appLockPolicy';
 import UserAvatar from './UserAvatar';
 
 const uriToBlob = (uri: string): Promise<Blob> =>
@@ -546,24 +547,12 @@ const ProfileScreen = ({ navigation }: any) => {
    * four states are the store's own: never read yet, no encrypted store on
    * this platform, a store that cannot be read, and a store that can.
    */
-  const lockDescription = (() => {
-    if (lockStatus === 'unknown') {
-      return 'Checking…';
-    }
-    if (lockStatus === 'storeBroken') {
-      return 'On, but this device can no longer read its secure storage';
-    }
-    if (!lockEnabled) {
-      return 'Off';
-    }
-    if (lockAvailability?.available && lockPinSet) {
-      return 'On, biometrics with a PIN fallback';
-    }
-    if (lockAvailability?.available) {
-      return 'On, biometrics';
-    }
-    return 'On, PIN only';
-  })();
+  const lockDescription = summarizeLockState({
+    status: lockStatus,
+    enabled: lockEnabled,
+    pinSet: lockPinSet,
+    biometricsAvailable: lockAvailability?.available === true,
+  }).label;
 
   return (
     <SafeAreaView

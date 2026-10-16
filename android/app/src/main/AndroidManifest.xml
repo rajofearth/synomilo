@@ -3,10 +3,33 @@
 <!-- package='com.rajofearth.synomilo'> -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      Required by ConnectivityManager.registerDefaultNetworkCallback, which the
+      call screen uses to detect a Wi-Fi to cellular handover and restart ICE so
+      a call survives the network changing underneath it.
+
+      This is NOT implied by INTERNET. Without it the registration throws a
+      SecurityException, the native call reports it cannot watch, and the app
+      degrades to recovering from ICE state alone, which only notices a handover
+      after ICE has already given up.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!--
+      Video calls were silently audio-only because this was missing.
+
+      `react-native-webrtc` does not declare CAMERA on the app's behalf: it only
+      declares MediaProjectionService. Requesting an undeclared permission is
+      denied by Android with no dialog and no log, so `PermissionsAndroid`
+      reported "denied", `getUserMedia` deleted the video constraints, and no
+      camera track was ever created. The local preview still mounted, because
+      `stream.toURL()` returns a valid id for an audio-only stream, so the box
+      rendered permanently empty and outgoing video was never sent either.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <!--

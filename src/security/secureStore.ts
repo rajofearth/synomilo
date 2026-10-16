@@ -421,7 +421,7 @@ export async function writeLockConfig(config: LockConfig): Promise<void> {
 }
 
 /**
- * A PLAINTEXT, non-sensitive marker recording that this install ever had the
+ * A PLAINTEXT, non-sensitive record of whether this install currently has the
  * app lock turned on.
  *
  * Why it exists. The security rule "an unreadable secure store is never
@@ -431,38 +431,95 @@ export async function writeLockConfig(config: LockConfig): Promise<void> {
  * the app concludes it must be locked, and shows a recovery-only screen with no
  * lock to recover from.
  *
- * This marker separates the two. It lives in ordinary AsyncStorage, so it is
+ * This record separates the two. It lives in ordinary AsyncStorage, so it is
  * readable exactly when the keystore is not. It holds no secret - just the fact
- * that a lock was configured - so writing it in the clear costs nothing.
+ * that a lock is configured - so writing it in the clear costs nothing.
  *
- * Set whenever the lock is enabled; cleared only on an explicit disable.
+ * ------------------------------------------------------------------------
+ * AND NOW IT ALSO CATCHES THE SILENT RESET
+ * ------------------------------------------------------------------------
+ * The marker used to be consulted ONLY in the `catch` branch, i.e. only when the
+ * store threw. That misses the more dangerous failure: `SecureStoreModule`
+ * catches a broken primary backend and opens the AES-GCM fallback, which creates
+ * a fresh non-exportable key and reads a *different, empty* preferences file.
+ * Nothing throws. Every read answers `null`. `readLockConfig()` reports
+ * `enabled: false`, `hasPin()` reports `false`, and the app concludes - out loud,
+ * to a user who has an app lock switched on - that there is no lock here.
+ *
+ * So the marker is now also a cross-check on a *successful* read: a marker that
+ * says "on" over a store that contains no keys at all is a store that was reset
+ * under us, not a store the user turned the lock off in. Fail closed.
+ *
+ * 'legacy' is v1.1.1-v1.1.3's bare `'true'`, which is ambiguous (it meant "ever
+ * configured" and was never cleared on disable). It is honoured on the throw
+ * path - which is what it was written for - and deliberately NOT trusted for the
+ * silent-reset check, because honouring it there would gate every user who
+ * enabled the lock once and then turned it off.
  */
 const CONFIGURED_MARKER = 'synomilo.applock.configured';
 
+export type AppLockMarker = 'on' | 'off' | 'legacy' | null;
+
+/** Records that the lock is on. Written only after the verifier and flag exist. */
 export async function markAppLockConfigured(): Promise<void> {
+  await writeMarker('on');
+}
+
+/**
+ * Records that the lock is off. Called from `disableAppLock` so that the
+ * cross-check above does not read a completed disable as a store that was reset
+ * underneath us.
+ */
+export async function markAppLockDisabled(): Promise<void> {
+  await writeMarker('off');
+}
+
+/**
+ * Plaintext AsyncStorage, used only for the marker below and the session-token
+ * migration. Deliberately NOT used for any lock configuration: see `readLockConfig`.
+ */
+async function writeMarker(value: 'on' | 'off'): Promise<void> {
   try {
-    const AsyncStorage = (await import('@react-native-async-storage/async-storage'))
-      .default;
-    await AsyncStorage.setItem(CONFIGURED_MARKER, 'true');
+    await AsyncStorage.setItem(CONFIGURED_MARKER, value);
   } catch {
-    // Best effort. Worst case is the conservative locked-by-default path.
+    // Best effort. Losing the 'on' write costs the cross-check below; losing the
+    // 'off' write costs at worst one spurious fail-closed gate, which the user
+    // clears with the same sign-out-and-reset control either way.
   }
 }
 
-export async function wasAppLockEverConfigured(): Promise<boolean> {
+/** Reads the plaintext record, mapping v1.1.1's `'true'` onto `'legacy'`. */
+export async function readAppLockMarker(): Promise<AppLockMarker> {
   try {
-    const AsyncStorage = (await import('@react-native-async-storage/async-storage'))
-      .default;
-    return (await AsyncStorage.getItem(CONFIGURED_MARKER)) === 'true';
+    const stored = await AsyncStorage.getItem(CONFIGURED_MARKER);
+    if (stored === 'on') {
+      return 'on';
+    }
+    if (stored === 'off') {
+      return 'off';
+    }
+    return stored === 'true' ? 'legacy' : null;
   } catch {
     // Cannot prove it was never configured, so assume the safe direction.
-    return true;
+    return 'on';
   }
 }
 
 /**
+ * Whether a lock was in force according to the plaintext record.
+ *
+ * `true` is the safe answer for every state that is not a definite "off":
+ * unknown, legacy, and unreadable all get the gate.
+ */
+export async function wasAppLockEverConfigured(): Promise<boolean> {
+  const marker = await readAppLockMarker();
+  return marker === 'on' || marker === 'legacy';
+}
+
+/**
  * Turns the lock on: the PIN first, then confirmation that it is really there,
- * then the flag. See `writeLockConfig` for why the order is what it is.
+ * then the flag, then the plaintext record. See `writeLockConfig` for why the
+ * order is what it is.
  * @throws {SecureStoreUnavailableError}
  */
 export async function enableAppLock(
@@ -482,16 +539,24 @@ export async function enableAppLock(
 /**
  * Turns the lock off. The session token is untouched - turning off the lock must
  * not sign anyone out.
+ *
+ * The flag goes FIRST, deliberately. The other order - clear the verifier, then
+ * clear the flag - can fail in between and leave `enabled: true` with no PIN
+ * behind it, which is the one configuration in which the gate comes up and has
+ * nothing to offer. This order's worst case is a verifier nobody can reach and a
+ * lock that is off, which is what the user just asked for.
+ *
  * @throws {SecureStoreUnavailableError}
  */
 export async function disableAppLock(): Promise<void> {
   const gate = requireBridge();
   try {
-    await gate.clearPin();
     await gate.setItem(LOCK_KEYS.enabled, 'false');
+    await gate.clearPin();
   } catch (error) {
     return rethrow(error);
   }
+  await markAppLockDisabled();
 }
 
 /** Replaces the PIN on an already-enabled lock. @throws {SecureStoreUnavailableError} */

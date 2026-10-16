@@ -39,3 +39,15 @@ export const useCallStore = create<CallStore>(set => ({
 
 export const isOngoingCall = (callId: string | undefined | null): boolean =>
   !!callId && useCallStore.getState().active?.callId === callId;
+
+/**
+ * Whether *any* call is live.
+ *
+ * Distinct from `isOngoingCall(id)` on purpose, for the audio route. The
+ * AudioManager's communication device and audio mode are a single global slot
+ * with a single owner, and the owner is "a call that is still going", not "this
+ * particular call". So tearing down one call's notification while a different
+ * call is live must not release audio: it would take the live call out of
+ * voice-call mode, which is the defect this predicate exists to avoid.
+ */
+export const hasOngoingCall = (): boolean => !!useCallStore.getState().active;

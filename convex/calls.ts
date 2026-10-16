@@ -4,14 +4,33 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { publicUser, pushTokensForUser, requireUser } from "./lib/helpers";
+import {
+  MAX_CONNECTED_CALL_MS,
+  classifyConnectedEnd,
+  isTerminal,
+  talkDurationMs,
+  type EndReason,
+} from "./lib/callTiming";
 
 const RING_TIMEOUT_MS = 60000;
 /**
  * How long an `active` call is treated as genuinely in progress before it is
  * considered abandoned. Rows abandoned by a killed app used to permanently
  * block the user from answering any new call.
+ *
+ * It is the same number as `MAX_CONNECTED_CALL_MS`, and deliberately so: "this
+ * `active` row is a dead call" and "this span is too long to be a conversation"
+ * are the same judgement, and one constant is how that stays true. See
+ * `convex/lib/callTiming.ts` for why the span between two timestamps on an
+ * abandoned row is not a talking time.
  */
-const ACTIVE_CALL_TTL_MS = 4 * 60 * 60 * 1000;
+const ACTIVE_CALL_TTL_MS = MAX_CONNECTED_CALL_MS;
+
+/** A terminal transition, as a patch. `endedAt` is filled in by `finishCall`. */
+type TerminalPatch = {
+  status: "ended" | "rejected" | "missed";
+  endReason: EndReason;
+};
 
 async function loadCall(
   ctx: QueryCtx | MutationCtx,
@@ -28,6 +47,52 @@ function assertParticipant(call: Doc<"calls">, userId: Id<"users">) {
   if (call.callerId !== userId && call.calleeId !== userId) {
     throw new ConvexError("You are not part of this call");
   }
+}
+
+/**
+ * ------------------------------------------------------------------------
+ * THE ONLY PLACE A CALL IS ALLOWED TO STOP
+ * ------------------------------------------------------------------------
+ *
+ * Six sites used to write `endedAt` between them, and each one chose its own
+ * moment to write it. Two of them chose the moment someone *looked at the row*,
+ * which is how a call nobody was on the phone for turned into eleven days of
+ * "talking time" on the Profile page.
+ *
+ * `finishCall` is now the single writer, and it holds three invariants that the
+ * arithmetic depends on:
+ *
+ *   1. `endedAt` is written exactly once per call. A terminal call is never
+ *      patched again, so a duration cannot be re-derived from a later clock and
+ *      a total cannot grow after the fact.
+ *   2. The timestamp written is the moment the end was *decided*, not the moment
+ *      the server noticed it. The sweeps pass `now` only because the moment a
+ *      dead row was noticed genuinely is when the call was found to be over.
+ *   3. A connected call whose end arrives outside the connected window is
+ *      recorded as `failed`, so the record says "the end was never recorded"
+ *      rather than "this was a conversation".
+ *
+ * It returns `true` when it wrote. A caller that loses the race against another
+ * writer gets `false` and does nothing, which is why this is a mutation rather
+ * than something that throws.
+ */
+async function finishCall(
+  ctx: MutationCtx,
+  call: Doc<"calls">,
+  terminal: TerminalPatch,
+  now: number,
+): Promise<boolean> {
+  if (isTerminal(call.status)) {
+    return false;
+  }
+  await ctx.db.patch(call._id, {
+    status: terminal.status,
+    endedAt: now,
+    endReason: terminal.endReason,
+  });
+  // Anyone who reads this row from now on reads fixed timestamps. From this
+  // point the call is only ever read, never written.
+  return true;
 }
 
 export const start = mutation({
@@ -53,21 +118,34 @@ export const start = mutation({
       .withIndex("by_caller", (q) => q.eq("callerId", me._id))
       .collect();
     for (const call of myRingingAsCaller) {
-      // An `active` call blocks regardless of age. The previous check was
-      // `now - createdAt < RING_TIMEOUT_MS`, so a 5-minute-old active call
-      // passed the test and a second call row was inserted.
+      // An `active` call blocks regardless of age, so a row left behind by a
+      // killed app would refuse every outgoing call forever. Rows older than
+      // the connected window are not calls any more, so they are closed as
+      // abandoned - which also keeps them out of the talking-time total, since
+      // `finishCall` records them as `failed`.
       if (call.status === "active") {
+        const startedAt = call.answeredAt ?? call.createdAt;
+        if (now - startedAt > ACTIVE_CALL_TTL_MS) {
+          await finishCall(
+            ctx,
+            call,
+            { status: "ended", endReason: "failed" },
+            now,
+          );
+          continue;
+        }
         throw new ConvexError("You are already in a call");
       }
       if (call.status === "ringing") {
         if (now - call.createdAt < RING_TIMEOUT_MS) {
           throw new ConvexError("You are already placing a call");
         }
-        await ctx.db.patch(call._id, {
-          status: "missed",
-          endedAt: now,
-          endReason: "timeout",
-        });
+        await finishCall(
+          ctx,
+          call,
+          { status: "missed", endReason: "timeout" },
+          now,
+        );
       }
     }
     const myRingingAsCallee = await ctx.db
@@ -77,11 +155,12 @@ export const start = mutation({
       )
       .collect();
     for (const call of myRingingAsCallee) {
-      await ctx.db.patch(call._id, {
-        status: "rejected",
-        endedAt: now,
-        endReason: "declined",
-      });
+      await finishCall(
+        ctx,
+        call,
+        { status: "rejected", endReason: "declined" },
+        now,
+      );
     }
 
     const callId = await ctx.db.insert("calls", {
@@ -246,12 +325,14 @@ export const accept = mutation({
     for (const stale of activeAsCallee) {
       const startedAt = stale.answeredAt ?? stale.createdAt;
       if (startedAt < staleBefore) {
-        // Abandoned: close it out so it can never block again.
-        await ctx.db.patch(stale._id, {
-          status: "ended",
-          endedAt: now,
-          endReason: "failed",
-        });
+        // Abandoned: close it out so it can never block again, and so no reader
+        // mistakes the time it sat here for a conversation.
+        await finishCall(
+          ctx,
+          stale,
+          { status: "ended", endReason: "failed" },
+          now,
+        );
       } else {
         throw new ConvexError("You are already on another call");
       }
@@ -271,11 +352,12 @@ export const reject = mutation({
     }
     if (call.status === "ringing") {
       const now = Date.now();
-      await ctx.db.patch(callId, {
-        status: "rejected",
-        endedAt: now,
-        endReason: "declined",
-      });
+      await finishCall(
+        ctx,
+        call,
+        { status: "rejected", endReason: "declined" },
+        now,
+      );
       await notifyPeerOfStop(
         ctx,
         call,
@@ -292,11 +374,12 @@ export const markTimedOut = internalMutation({
   handler: async (ctx, { callId }) => {
     const call = await ctx.db.get(callId);
     if (call && call.status === "ringing") {
-      await ctx.db.patch(callId, {
-        status: "missed",
-        endedAt: Date.now(),
-        endReason: "timeout",
-      });
+      await finishCall(
+        ctx,
+        call,
+        { status: "missed", endReason: "timeout" },
+        Date.now(),
+      );
       await notifyPeerOfStop(ctx, call, call.calleeId, "cancelled");
     }
   },
@@ -312,15 +395,39 @@ export const end = mutation({
     const peerId = call.callerId === me._id ? call.calleeId : call.callerId;
     if (call.status === "ringing") {
       const cancelled = call.callerId === me._id;
-      await ctx.db.patch(callId, {
-        status: cancelled ? "missed" : "rejected",
-        endedAt: now,
-        endReason: cancelled ? "timeout" : "declined",
-      });
-      await notifyPeerOfStop(ctx, call, peerId, "cancelled");
+      const wrote = await finishCall(
+        ctx,
+        call,
+        {
+          status: cancelled ? "missed" : "rejected",
+          endReason: cancelled ? "timeout" : "declined",
+        },
+        now,
+      );
+      if (wrote) {
+        await notifyPeerOfStop(ctx, call, peerId, "cancelled");
+      }
     } else if (call.status === "active") {
-      await ctx.db.patch(callId, { status: "ended", endedAt: now, endReason: "hangup" });
-      await notifyPeerOfStop(ctx, call, peerId, "ended");
+      // A hangup the server watched happen is a hangup. A hangup that arrives
+      // more than `ACTIVE_CALL_TTL_MS` after the call was answered is not: it
+      // is the first sign that anyone has had of this call since it died, and
+      // `now` is how long the row has been sitting in the database rather than
+      // how long anyone was talking. Recording that span as talking time is
+      // what produced the 275 hours on the Profile page, so the record says
+      // `failed` - no talking time, and the call log can tell it apart from a
+      // call that ended properly.
+      const wrote = await finishCall(
+        ctx,
+        call,
+        {
+          status: "ended",
+          endReason: classifyConnectedEnd(call.answeredAt, now),
+        },
+        now,
+      );
+      if (wrote) {
+        await notifyPeerOfStop(ctx, call, peerId, "ended");
+      }
     }
     return true;
   },
@@ -362,10 +469,13 @@ export const history = query({
           answeredAt: call.answeredAt ?? null,
           endedAt: call.endedAt ?? null,
           endReason: call.endReason ?? null,
-          durationMs:
-            call.answeredAt && call.endedAt
-              ? Math.max(0, call.endedAt - call.answeredAt)
-              : null,
+          // The one definition of talking time, and the only field on this row
+          // that is a claim about how long someone was on a call. It is `null`
+          // for every call that was not answered and ended normally within the
+          // connected window - including a call still in progress and a call
+          // abandoned by a killed app - so summing this column can only ever
+          // produce a defensible total. See `convex/lib/callTiming.ts`.
+          durationMs: talkDurationMs(call),
           direction: call.callerId === me._id ? "outgoing" : "incoming",
           peer: peer ? publicUser(peer) : null,
         });
@@ -377,7 +487,23 @@ export const history = query({
         break;
       }
     }
-    return { calls: rows, hasMore: rows.length >= take, cursor: cursor ?? null };
+    // Filling the page is not the same as there being more behind it: a user
+    // with exactly `take` calls would otherwise be told their totals were
+    // capped when in fact nothing was excluded. The Profile renders a
+    // "last 50" caveat from this flag, so it has to be the real answer, not a
+    // guess. One indexed read settles it, and only when the page filled.
+    let hasMore = false;
+    if (rows.length >= take && cursor !== undefined) {
+      const older = await ctx.db
+        .query("calls")
+        .withIndex("by_createdAt", (q) => q.lt("createdAt", cursor))
+        .order("desc")
+        .take(1);
+      hasMore = older.some(
+        (call) => call.callerId === me._id || call.calleeId === me._id,
+      );
+    }
+    return { calls: rows, hasMore, cursor: cursor ?? null };
   },
 });
 

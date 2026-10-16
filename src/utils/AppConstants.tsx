@@ -12,7 +12,7 @@ export const AppConstants = {
   // so it caused no harm; but it is a second place to bump a version by mistake
   // the moment something starts displaying it. Anything that needs the version
   // should call `DeviceInfo.getVersion()`. Do not "fix" this number.
-  versionNumber: '1.1.3',
+  versionNumber: '1.1.4',
   webClientId:
     '',
   iosClientId:

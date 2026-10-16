@@ -12,6 +12,7 @@ import type * as auth from "../auth.js";
 import type * as calls from "../calls.js";
 import type * as conversations from "../conversations.js";
 import type * as files from "../files.js";
+import type * as lib_callTiming from "../lib/callTiming.js";
 import type * as lib_helpers from "../lib/helpers.js";
 import type * as messages from "../messages.js";
 import type * as push from "../push.js";
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   calls: typeof calls;
   conversations: typeof conversations;
   files: typeof files;
+  "lib/callTiming": typeof lib_callTiming;
   "lib/helpers": typeof lib_helpers;
   messages: typeof messages;
   push: typeof push;

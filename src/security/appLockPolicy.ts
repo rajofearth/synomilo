@@ -105,18 +105,16 @@ export type CallSignal = {
  * conversation to anyone the caller can reach. `ringing` exists here for the
  * *resume* decision, where it is the difference between "the user came back to
  * answer a call" and "the user came back to read messages".
+ *
+ * PURELY THE SIGNAL. Nothing in this function reads a timestamp or a latch, and
+ * that is the whole point: it answers "is a call in the picture right now", which
+ * is a question about observable state. The one exception - the navigation gap
+ * before `screenVisible` is set - is not answered here. It is answered exactly
+ * once, by `claimCallHandOff`, because that gap belongs to the *episode* that is
+ * being armed inside it and to nothing else. See the hand-off section below.
  */
 export function callInterruptsLock(signal: CallSignal): boolean {
-  // A hand-off in progress is the caller saying "the user just answered, I am
-  // navigating now". React state has not caught up yet, so `signal` can still say
-  // nothing is happening while a prompt is about to be scheduled. Trusting the
-  // stamp is what stops the dialog flashing over the call being answered.
-  return (
-    signal.connected ||
-    signal.ringing ||
-    signal.callScreenVisible ||
-    isCallHandOffRecent()
-  );
+  return signal.connected || signal.ringing || signal.callScreenVisible;
 }
 
 /** The subset that is allowed to bring an already-armed gate down. */
@@ -124,12 +122,13 @@ export function callReleasesGate(signal: CallSignal): boolean {
   // Accepting a call stands the lock down: the user has already proved who they
   // are by getting to the app to answer it. Re-arming them on the call screen
   // would be the "it asks me for my biometric pin again" complaint.
-  return (
-    signal.connected || signal.callScreenVisible || isCallHandOffRecent()
-  );
+  return signal.connected || signal.callScreenVisible;
 }
+
 /**
- * WHY A MODULE-LEVEL LATCH AND NOT ANOTHER PROP
+ * ------------------------------------------------------------------------
+ * THE CALL HAND-OFF
+ * ------------------------------------------------------------------------
  *
  * Accepting an incoming call can land on the call screen before any React state
  * says so. `callReleasesGate` needs `callScreenVisible`, which `AppLock` reads
@@ -142,33 +141,214 @@ export function callReleasesGate(signal: CallSignal): boolean {
  * Propagating a signal through props cannot close that gap, because both sides
  * are reacting to the same event and neither has run yet. A `Date.now()` stamp in
  * module scope can: `App.tsx` marks the hand-off synchronously at the moment it
- * decides to navigate, and `AppLock` reads it when it decides whether to spend an
- * episode. Ordering is then guaranteed rather than merely likely.
+ * decides to navigate, and `AppLock` claims it when it arms.
+ *
+ * ------------------------------------------------------------------------
+ * WHY IT IS CLAIMED ONCE AND NOT POLLED
+ * ------------------------------------------------------------------------
+ * This used to be a free-running window that three different decisions
+ * (`callInterruptsLock`, `callReleasesGate` and the auto-prompt effect) each
+ * consulted on their own schedule. That is what made the reported bug possible:
+ * a stamp taken on an ordinary foreground was still true when the gate armed, so
+ * the gate stood itself down and the fingerprint prompt never appeared - not on
+ * open, not on resume, ever. A latch that three unrelated readers can each act
+ * on is not a hand-off any more; it is a global mute with a five second timeout.
+ *
+ * So the fact is *claimed*, once, by the single decision it actually bears on:
+ * the arming of a lock episode. `claimCallHandOff()` answers "is this episode
+ * being armed inside a call navigation?" and then refuses to answer again until
+ * a new hand-off is noted. Consequences, all of them intended:
+ *
+ *   - One real `openCallScreen` can suppress exactly one lock episode.
+ *   - A second arming, a second resume, or any later open is judged on the
+ *     observable call signal alone.
+ *   - A stamp that is never claimed simply expires.
  */
 let callHandOffAt = 0;
+let callHandOffClaimed = false;
 
 /**
- * How long a hand-off keeps suppressing the prompt. Deliberately short: it only
- * has to outlast the navigation gap between "the user accepted" and
+ * How long a hand-off keeps being claimable. Deliberately short: it only has to
+ * outlast the navigation gap between "the user accepted" and
  * `callScreenVisible` becoming true, which is a few hundred milliseconds. A long
- * window would be a silent security hole - abandoning the call screen mid-gap
- * would leave the lock disarmed for as long as the window lasted.
+ * window would widen the blast radius of a mis-placed `noteCallHandOff()`.
  */
 const HAND_OFF_WINDOW_MS = 5_000;
 
 /**
  * Record that the user has just accepted a call and is being moved to the call
  * screen. Call this from the one place that navigates there, before `navigate()`.
+ *
+ * One site only. It means "a call is involved", and putting it on any general
+ * foreground handler turns the lock off for everybody - which is exactly the
+ * regression that made the fingerprint prompt stop appearing on every ordinary
+ * open.
+ *
+ * The stamp alone suppresses nothing. `claimCallHandOff` is the only reader, it
+ * runs once per arming, and the episode it arms gives up its exemption after
+ * `CALL_BORN_PROMPT_GRACE_MS` whether or not a call ever shows up.
  */
 export function noteCallHandOff(): void {
   callHandOffAt = Date.now();
+  callHandOffClaimed = false;
 }
 
 /**
- * True while a call hand-off is still in progress. Bounded rather than sticky: a
- * call that was abandoned in the navigation gap must not disable the lock for
- * the rest of the session, so the latch expires.
+ * True exactly once per hand-off, and only while the hand-off is fresh.
+ *
+ * The caller is `armLock`, so the answer is "this episode began inside a call
+ * navigation" - and it can only ever be true of one episode.
  */
-export function isCallHandOffRecent(windowMs = HAND_OFF_WINDOW_MS): boolean {
-  return callHandOffAt > 0 && Date.now() - callHandOffAt < windowMs;
+export function claimCallHandOff(now: number = Date.now()): boolean {
+  if (
+    callHandOffClaimed ||
+    callHandOffAt === 0 ||
+    now - callHandOffAt >= HAND_OFF_WINDOW_MS
+  ) {
+    return false;
+  }
+  callHandOffClaimed = true;
+  return true;
+}
+
+/**
+ * ------------------------------------------------------------------------
+ * HOW LONG A CALL-BORN EPISODE MAY GO WITHOUT A PROMPT
+ * ------------------------------------------------------------------------
+ *
+ * A call-born episode is one that `armLock` began inside a call navigation. It
+ * owes no prompt, because the call is about to take the screen and
+ * `callReleasesGate` will stand the gate down.
+ *
+ * That is a promise about something that has not happened yet, so it needs a
+ * deadline. If the navigation fails, the call is dropped in the gap, or the
+ * accept was for a call that is already over, nothing arrives to release the
+ * gate - and an episode that is quietly exempt from the one thing every other
+ * episode gets is exactly how a lock ends up armed with no way through it.
+ *
+ * Three seconds is an order of magnitude more than the gap it has to cover (a
+ * Convex round trip plus a navigation plus a screen mount is a few hundred
+ * milliseconds) and an order of magnitude less than the grace periods this app
+ * offers, so the user is never left waiting on a clock they cannot see. The
+ * PIN pad is on screen for the whole of it, so the deadline is a ceiling on the
+ * awkwardness, not on their ability to get in.
+ */
+export const CALL_BORN_PROMPT_GRACE_MS = 3_000;
+
+/**
+ * Whether an episode that was armed inside a call navigation may still decline
+ * to present a prompt.
+ *
+ * The single reader of `callBornEpisode`, so the deadline cannot be applied
+ * inconsistently by the auto-prompt effect and the render.
+ */
+export function callBornMayWithholdPrompt(args: {
+  bornEpisode: number;
+  episode: number;
+  bornAt: number;
+  now?: number;
+}): boolean {
+  if (args.bornEpisode !== args.episode || args.bornEpisode < 0) {
+    return false;
+  }
+  return (args.now ?? Date.now()) - args.bornAt < CALL_BORN_PROMPT_GRACE_MS;
+}
+
+/**
+ * ------------------------------------------------------------------------
+ * THE WAY-FORWARD INVARIANT
+ * ------------------------------------------------------------------------
+ *
+ * What an armed gate is offering, as a value, so the render cannot answer the
+ * question by re-deriving it three different ways.
+ *
+ * There are exactly three answers and no fourth. This exists because the
+ * question used to be asked twice with two different expressions - once in the
+ * component body as `!biometricAvailable`, once in the auto-prompt effect as
+ * `callInterruptsLock` - and the space between those two answers is where "the
+ * gate came up and offered nothing" lived.
+ *
+ * `recovery` is not a failure state: it is the state that renders the
+ * unconditional sign-out-and-reset control, which is why an install with no
+ * usable verifier is still escapable.
+ */
+export type GateSurface = 'prompt' | 'pinPad' | 'recovery';
+
+export function resolveGateSurface(args: {
+  /** The OS dialog is up right now, or is about to be. */
+  promptShowing: boolean;
+  /** A verifier was read out of the store and is therefore enterable. */
+  pinUsable: boolean;
+}): GateSurface {
+  if (args.promptShowing) {
+    return 'prompt';
+  }
+  return args.pinUsable ? 'pinPad' : 'recovery';
+}
+
+/**
+ * ------------------------------------------------------------------------
+ * WHAT THE LOCK ROW IS ALLOWED TO SAY
+ * ------------------------------------------------------------------------
+ *
+ * Settings and Profile each describe the lock in their own words, and the gate
+ * decides for itself. Nothing stopped the three from disagreeing, and two
+ * documented states make them: a platform with no encrypted store (Settings
+ * said "not available", Profile said "Off") and a lock that is on with no
+ * verifier behind it (both said "PIN only", which is a promise of a keypad that
+ * is not there).
+ *
+ * This is the one description, derived from the one store, so that a row
+ * saying "on" is a statement about what the gate will actually do.
+ */
+export type LockStatusSummary = {
+  /** Whether the gate will come up on the next foreground. */
+  willLock: boolean;
+  /** Whether the gate can only be left by signing out. */
+  needsReset: boolean;
+  /** Copy for a settings row. Never mentions a fallback that is not there. */
+  label: string;
+};
+
+export function summarizeLockState(state: {
+  status: 'unsupported' | 'unknown' | 'ready' | 'storeBroken';
+  enabled: boolean;
+  pinSet: boolean;
+  biometricsAvailable: boolean;
+}): LockStatusSummary {
+  if (state.status === 'unknown') {
+    return { willLock: false, needsReset: false, label: 'Checking…' };
+  }
+  if (state.status === 'unsupported') {
+    return { willLock: false, needsReset: false, label: 'Not available on this device' };
+  }
+  if (state.status === 'storeBroken') {
+    // `willLock` is true: this is the fail-closed branch, and the row must not
+    // describe it as anything softer.
+    return {
+      willLock: true,
+      needsReset: true,
+      label: 'On, but this device can no longer read its secure storage',
+    };
+  }
+  if (!state.enabled) {
+    return { willLock: false, needsReset: false, label: 'Off' };
+  }
+  if (!state.pinSet) {
+    // On, with nothing to enter. The gate still comes up, and the only way out
+    // is the reset control - so the row says exactly that.
+    return {
+      willLock: true,
+      needsReset: true,
+      label: 'On, but there is no PIN stored - reset required to get in',
+    };
+  }
+  if (state.biometricsAvailable) {
+    return {
+      willLock: true,
+      needsReset: false,
+      label: 'On, biometrics with a PIN fallback',
+    };
+  }
+  return { willLock: true, needsReset: false, label: 'On, PIN only' };
 }

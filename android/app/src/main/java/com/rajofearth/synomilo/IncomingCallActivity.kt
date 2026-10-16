@@ -67,10 +67,19 @@ import androidx.core.content.ContextCompat
  * ## This screen makes no sound, ever
  *
  * There is no MediaPlayer, no Ringtone, no ToneGenerator here - and that is the
- * point, not an omission. An incoming call has exactly ONE sound source: the
- * notification channel (`incoming_call_v4`, src/notifications/callNotifications.ts).
- * A second source is how a call ends up playing two tones at once, or the dial
- * tone, or nothing but one of the two. This class is presentation only.
+ * point, not an omission. There is exactly ONE sound source per app state, and it
+ * is never this class:
+ *
+ *   - app not visible (here, backgrounded or killed): the ringing notification
+ *     channel, `incoming_call_v5`, src/notifications/callNotifications.ts. This
+ *     activity is drawn *because of* that notification.
+ *   - app visible: `IncomingCallOverlay`, which owns the ring natively while it
+ *     is on screen (CallAudioModule.kt) and posts this notification back on its
+ *     way out. If this screen is on top, the app is not visible, so that cannot
+ *     be the state at the same time.
+ *
+ * A second source here is how a call ends up playing two tones at once, or the
+ * dial tone, or nothing but one of the two. This class is presentation only.
  *
  * ## What this class DOES own: ending the ring
  *
